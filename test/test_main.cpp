@@ -105,6 +105,11 @@ void testRouteValidationAndTranslation() {
 
   EndpointRoute withEmptyMiddle[3];
   withEmptyMiddle[0] = makeHoldingRoute(1U, 0U, 0U, 4U);
+  // Empty routes still retain their sorted insertion point. This lets sparse
+  // tables use the exact same binary-search path as fully populated tables.
+  withEmptyMiddle[1].upstream[
+      static_cast<uint8_t>(RegisterTable::HoldingRegisters)] =
+      AddressRange(4U, 0U);
   withEmptyMiddle[2] = makeHoldingRoute(3U, 4U, 0U, 4U);
   RouteTableView zeroSafe(withEmptyMiddle, 3U);
   CHECK(zeroSafe.validate() == RouteTableStatus::Valid);
@@ -114,6 +119,14 @@ void testRouteValidationAndTranslation() {
   CHECK(zeroSafe.locate(
       RegisterTable::HoldingRegisters, 6U, routeIndex));
   CHECK(routeIndex == 2U);
+
+  EndpointRoute misplacedEmpty[3];
+  misplacedEmpty[0] = makeHoldingRoute(1U, 0U, 0U, 4U);
+  // The default start of zero is behind the first range's end, so accepting
+  // this as a midpoint would make binary lookup incorrectly skip route zero.
+  misplacedEmpty[2] = makeHoldingRoute(3U, 4U, 0U, 4U);
+  CHECK(RouteTableView(misplacedEmpty, 3U).validate() ==
+        RouteTableStatus::Unsorted);
 }
 
 void testCacheImage() {

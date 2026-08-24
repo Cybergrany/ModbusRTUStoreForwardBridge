@@ -129,8 +129,10 @@ class RouteTableView {
     for(uint8_t tableIndex = 0U;
         tableIndex < static_cast<uint8_t>(RegisterTable::Count);
         ++tableIndex){
-      uint32_t previousEnd = 0U;
-      bool havePrevious = false;
+      uint32_t previousStart = 0U;
+      uint32_t previousPopulatedEnd = 0U;
+      bool havePreviousRoute = false;
+      bool havePreviousPopulated = false;
       for(uint16_t routeIndex = 0U; routeIndex < routeCount_; ++routeIndex){
         const AddressRange& upstream = routes_[routeIndex].upstream[tableIndex];
         const AddressRange& downstream = routes_[routeIndex].downstream[tableIndex];
@@ -140,29 +142,39 @@ class RouteTableView {
         if(upstream.end() > 0x10000UL || downstream.end() > 0x10000UL){
           return RouteTableStatus::RangeOverflow;
         }
-        if(upstream.count == 0U){
-          continue;
+        const uint32_t upstreamStart = static_cast<uint32_t>(upstream.start);
+        if(havePreviousRoute && upstreamStart < previousStart){
+          return RouteTableStatus::Unsorted;
         }
-        if(havePrevious){
-          if(static_cast<uint32_t>(upstream.start) < previousEnd){
-            return RouteTableStatus::Overlap;
-          }
-          if(static_cast<uint32_t>(upstream.start) <
-             static_cast<uint32_t>(routes_[routeIndex - 1U].upstream[tableIndex].start)){
+        if(upstream.count == 0U){
+          // An empty mapping is still a binary-search partition. Its start
+          // must remain at or after the preceding populated range, otherwise
+          // it could steer an address away from the route that contains it.
+          if(havePreviousPopulated &&
+             upstreamStart < previousPopulatedEnd){
             return RouteTableStatus::Unsorted;
           }
+          previousStart = upstreamStart;
+          havePreviousRoute = true;
+          continue;
         }
-        previousEnd = upstream.end();
-        havePrevious = true;
+        if(havePreviousPopulated &&
+           upstreamStart < previousPopulatedEnd){
+          return RouteTableStatus::Overlap;
+        }
+        previousStart = upstreamStart;
+        previousPopulatedEnd = upstream.end();
+        havePreviousRoute = true;
+        havePreviousPopulated = true;
       }
     }
     return RouteTableStatus::Valid;
   }
 
-  // Locate the endpoint containing one upstream address. Valid populated
-  // ranges use the same binary-search shape as the legacy OGM bridge. If a
-  // midpoint has no mapping for this table, fall back to the zero-safe linear
-  // path; normal populated hot paths retain logarithmic lookup cost.
+  // Locate the endpoint containing one upstream address. validate() requires
+  // zero-count routes to retain their sorted insertion-point start, so sparse
+  // tables use the same logarithmic binary-search shape as populated tables
+  // and as the legacy OGM bridge hot path.
   bool locate(RegisterTable table,
               uint16_t upstreamAddress,
               uint16_t& routeIndexOut) const {
@@ -180,21 +192,21 @@ class RouteTableView {
           static_cast<int16_t>(low + ((high - low) / 2));
       const AddressRange& range =
           routes_[static_cast<uint16_t>(middle)].upstream[tableIndex];
-      if(range.count == 0U){
-        return locateWithEmptyMappings(
-            tableIndex, upstreamAddress, routeIndexOut);
-      }
-      if(static_cast<uint32_t>(upstreamAddress) <
-         static_cast<uint32_t>(range.start)){
+      const uint32_t start = static_cast<uint32_t>(range.start);
+      const uint32_t end = range.end();
+      if(static_cast<uint32_t>(upstreamAddress) < start){
         high = static_cast<int16_t>(middle - 1);
         continue;
       }
-      if(static_cast<uint32_t>(upstreamAddress) >= range.end()){
+      if(static_cast<uint32_t>(upstreamAddress) >= end){
         low = static_cast<int16_t>(middle + 1);
         continue;
       }
-      routeIndexOut = static_cast<uint16_t>(middle);
-      return true;
+      if(end > start){
+        routeIndexOut = static_cast<uint16_t>(middle);
+        return true;
+      }
+      low = static_cast<int16_t>(middle + 1);
     }
     return false;
   }
@@ -283,22 +295,6 @@ class RouteTableView {
   }
 
  private:
-  bool locateWithEmptyMappings(uint8_t tableIndex,
-                               uint16_t upstreamAddress,
-                               uint16_t& routeIndexOut) const {
-    for(uint16_t routeIndex = 0U; routeIndex < routeCount_; ++routeIndex){
-      const AddressRange& range = routes_[routeIndex].upstream[tableIndex];
-      if(range.contains(upstreamAddress)){
-        routeIndexOut = routeIndex;
-        return true;
-      }
-      if(range.count != 0U && upstreamAddress < range.start){
-        break;
-      }
-    }
-    return false;
-  }
-
   const EndpointRoute* routes_;
   uint16_t routeCount_;
 };

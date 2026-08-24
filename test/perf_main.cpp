@@ -11,12 +11,19 @@ using namespace ModbusRTUBridge;
 
 static const uint16_t kRouteCount = 9U;
 static const uint32_t kIterations = 2000000UL;
+static const uint8_t kSampleCount = 31U;
 volatile uint32_t g_sink = 0U;
 
-bool legacyLocate(const EndpointRoute* routes,
-                  uint16_t routeCount,
-                  uint16_t address,
-                  uint16_t& indexOut) {
+#if defined(__GNUC__)
+#define OGM_PERF_LOOKUP __attribute__((noinline, aligned(64)))
+#else
+#define OGM_PERF_LOOKUP
+#endif
+
+OGM_PERF_LOOKUP bool legacyLocate(const EndpointRoute* routes,
+                                  uint16_t routeCount,
+                                  uint16_t address,
+                                  uint16_t& indexOut) {
   int16_t low = 0;
   int16_t high = static_cast<int16_t>(routeCount) - 1;
   const uint8_t table = static_cast<uint8_t>(RegisterTable::HoldingRegisters);
@@ -39,6 +46,17 @@ bool legacyLocate(const EndpointRoute* routes,
     low = static_cast<int16_t>(middle + 1);
   }
   return false;
+}
+
+// Keep both lookup bodies out of the timing-lane template and give them the
+// same code alignment. Otherwise unrelated compiler layout can make one
+// inlined loop straddle a cache/decoder boundary and intermittently look more
+// than five percent slower even when the lookup bodies are equivalent.
+OGM_PERF_LOOKUP bool candidateLocate(const RouteTableView& table,
+                                     uint16_t address,
+                                     uint16_t& indexOut) {
+  return table.locate(
+      RegisterTable::HoldingRegisters, address, indexOut);
 }
 
 template<typename Locate>
@@ -95,11 +113,26 @@ int main() {
     addresses[index] = static_cast<uint16_t>((index * 37U) % 288U);
   }
 
-  const uint8_t sampleCount = 9U;
-  double ratios[sampleCount];
+  // Warm both lanes before sampling. This avoids treating host CPU frequency
+  // ramp-up as a library regression while the paired, alternating samples
+  // below still expose a sustained lookup cost.
+  (void)runLane(
+      [&](uint16_t address, uint16_t& index) {
+        return legacyLocate(routes, kRouteCount, address, index);
+      },
+      addresses,
+      64U);
+  (void)runLane(
+      [&](uint16_t address, uint16_t& index) {
+        return candidateLocate(table, address, index);
+      },
+      addresses,
+      64U);
+
+  double ratios[kSampleCount];
   double legacyTotal = 0.0;
   double candidateTotal = 0.0;
-  for(uint8_t sample = 0U; sample < sampleCount; ++sample){
+  for(uint8_t sample = 0U; sample < kSampleCount; ++sample){
     double legacy = 0.0;
     double candidate = 0.0;
     if((sample & 1U) == 0U){
@@ -111,16 +144,14 @@ int main() {
           64U);
       candidate = runLane(
           [&](uint16_t address, uint16_t& index) {
-            return table.locate(
-                RegisterTable::HoldingRegisters, address, index);
+            return candidateLocate(table, address, index);
           },
           addresses,
           64U);
     }else{
       candidate = runLane(
           [&](uint16_t address, uint16_t& index) {
-            return table.locate(
-                RegisterTable::HoldingRegisters, address, index);
+            return candidateLocate(table, address, index);
           },
           addresses,
           64U);
@@ -135,13 +166,12 @@ int main() {
     legacyTotal += legacy;
     candidateTotal += candidate;
   }
-  sort(ratios, sampleCount);
-  const double medianRatio = ratios[sampleCount / 2U];
+  sort(ratios, kSampleCount);
+  const double medianRatio = ratios[kSampleCount / 2U];
   printf("route lookup: legacy=%.2f ns candidate=%.2f ns paired_median=%.4f sink=%lu\n",
-         legacyTotal / sampleCount,
-         candidateTotal / sampleCount,
+         legacyTotal / kSampleCount,
+         candidateTotal / kSampleCount,
          medianRatio,
          static_cast<unsigned long>(g_sink));
   return medianRatio <= 1.05 ? 0 : 1;
 }
-
