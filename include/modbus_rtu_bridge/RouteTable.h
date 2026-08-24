@@ -159,10 +159,10 @@ class RouteTableView {
     return RouteTableStatus::Valid;
   }
 
-  // Locate the endpoint containing one upstream address. The route array is
-  // expected to have passed validate(); a linear scan deliberately tolerates
-  // zero-length table mappings interspersed between active mappings and keeps
-  // the storage/API tiny for the small endpoint counts typical of MCU bridges.
+  // Locate the endpoint containing one upstream address. Valid populated
+  // ranges use the same binary-search shape as the legacy OGM bridge. If a
+  // midpoint has no mapping for this table, fall back to the zero-safe linear
+  // path; normal populated hot paths retain logarithmic lookup cost.
   bool locate(RegisterTable table,
               uint16_t upstreamAddress,
               uint16_t& routeIndexOut) const {
@@ -173,15 +173,28 @@ class RouteTableView {
     if(tableIndex >= static_cast<uint8_t>(RegisterTable::Count)){
       return false;
     }
-    for(uint16_t routeIndex = 0U; routeIndex < routeCount_; ++routeIndex){
-      const AddressRange& range = routes_[routeIndex].upstream[tableIndex];
-      if(range.contains(upstreamAddress)){
-        routeIndexOut = routeIndex;
-        return true;
+    int16_t low = 0;
+    int16_t high = static_cast<int16_t>(routeCount_) - 1;
+    while(low <= high){
+      const int16_t middle =
+          static_cast<int16_t>(low + ((high - low) / 2));
+      const AddressRange& range =
+          routes_[static_cast<uint16_t>(middle)].upstream[tableIndex];
+      if(range.count == 0U){
+        return locateWithEmptyMappings(
+            tableIndex, upstreamAddress, routeIndexOut);
       }
-      if(range.count != 0U && upstreamAddress < range.start){
-        break;
+      if(static_cast<uint32_t>(upstreamAddress) <
+         static_cast<uint32_t>(range.start)){
+        high = static_cast<int16_t>(middle - 1);
+        continue;
       }
+      if(static_cast<uint32_t>(upstreamAddress) >= range.end()){
+        low = static_cast<int16_t>(middle + 1);
+        continue;
+      }
+      routeIndexOut = static_cast<uint16_t>(middle);
+      return true;
     }
     return false;
   }
@@ -270,9 +283,24 @@ class RouteTableView {
   }
 
  private:
+  bool locateWithEmptyMappings(uint8_t tableIndex,
+                               uint16_t upstreamAddress,
+                               uint16_t& routeIndexOut) const {
+    for(uint16_t routeIndex = 0U; routeIndex < routeCount_; ++routeIndex){
+      const AddressRange& range = routes_[routeIndex].upstream[tableIndex];
+      if(range.contains(upstreamAddress)){
+        routeIndexOut = routeIndex;
+        return true;
+      }
+      if(range.count != 0U && upstreamAddress < range.start){
+        break;
+      }
+    }
+    return false;
+  }
+
   const EndpointRoute* routes_;
   uint16_t routeCount_;
 };
 
 }  // namespace ModbusRTUBridge
-

@@ -102,6 +102,18 @@ void testRouteValidationAndTranslation() {
   overlap[0] = makeHoldingRoute(1U, 10U, 0U, 4U);
   overlap[1] = makeHoldingRoute(2U, 13U, 0U, 2U);
   CHECK(RouteTableView(overlap, 2U).validate() == RouteTableStatus::Overlap);
+
+  EndpointRoute withEmptyMiddle[3];
+  withEmptyMiddle[0] = makeHoldingRoute(1U, 0U, 0U, 4U);
+  withEmptyMiddle[2] = makeHoldingRoute(3U, 4U, 0U, 4U);
+  RouteTableView zeroSafe(withEmptyMiddle, 3U);
+  CHECK(zeroSafe.validate() == RouteTableStatus::Valid);
+  CHECK(zeroSafe.locate(
+      RegisterTable::HoldingRegisters, 1U, routeIndex));
+  CHECK(routeIndex == 0U);
+  CHECK(zeroSafe.locate(
+      RegisterTable::HoldingRegisters, 6U, routeIndex));
+  CHECK(routeIndex == 2U);
 }
 
 void testCacheImage() {

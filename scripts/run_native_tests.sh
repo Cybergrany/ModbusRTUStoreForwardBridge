@@ -19,3 +19,23 @@ compiler="${CXX:-g++}"
 
 "$build_dir/test_main"
 
+"$compiler" \
+  -std=c++11 \
+  -O2 \
+  -Wall \
+  -Wextra \
+  -Werror \
+  -pedantic-errors \
+  -I"$repo_dir/include" \
+  "$repo_dir/test/perf_main.cpp" \
+  -o "$build_dir/perf_main"
+
+if command -v taskset >/dev/null 2>&1; then
+  affinity_cpu="${OGM_MODBUS_PERF_CPU:-}"
+  if [[ -z "$affinity_cpu" ]]; then
+    affinity_cpu="$(awk '/Cpus_allowed_list:/ { split($2, ranges, ","); split(ranges[1], first, "-"); print first[1]; exit }' /proc/self/status)"
+  fi
+  taskset -c "$affinity_cpu" "$build_dir/perf_main"
+else
+  "$build_dir/perf_main"
+fi

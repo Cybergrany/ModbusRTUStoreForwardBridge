@@ -26,10 +26,11 @@ message ordering and old slave firmware compatibility must remain unchanged.
 
 Public API examples and invariants live beside each header under
 `include/modbus_rtu_bridge/`. Native characterization tests live under `test/`.
+`scripts/run_native_tests.sh` also runs a CPU-affined paired route-lookup gate;
+the median neutral/legacy ratio may not exceed 1.05.
 
 ## Status
 
 This repository is being prepared in an isolated local worktree for Stage C of
 the OGM Modbus separation. A public remote and release tag will be assigned only
 after the compatibility consumer and differential software gates are green.
-
