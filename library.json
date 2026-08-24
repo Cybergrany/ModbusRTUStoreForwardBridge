@@ -1,0 +1,17 @@
+{
+  "name": "ModbusRTUStoreForwardBridge",
+  "version": "0.1.0",
+  "description": "Allocation-free C++11 core for cached Modbus RTU store-and-forward bridges",
+  "keywords": [
+    "modbus",
+    "rtu",
+    "bridge",
+    "embedded"
+  ],
+  "frameworks": "*",
+  "platforms": "*",
+  "build": {
+    "includeDir": "include"
+  }
+}
+
