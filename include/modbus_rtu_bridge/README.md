@@ -82,6 +82,12 @@ specific master implementation. `executeDownstreamRequest()` validates the
 same quantity/buffer preconditions, performs exactly one backend call and
 returns the request sequence, backend result and exception code together.
 
+An adapter that must retain an established validator/error-log path may call
+`executeValidatedDownstreamRequest()` after that validator succeeds. Its
+precondition is explicit: quantity, buffer and operation must already be valid.
+This prevents a migration adapter from performing the checks twice without
+moving its existing externally visible error classification.
+
 ```cpp
 #include <modbus_rtu_bridge/DownstreamExecutor.h>
 
@@ -109,4 +115,3 @@ const ModbusRTUBridge::DownstreamCompletion<int> completion =
 Queueing, retry counts, pacing, deadlines and worker priorities belong to the
 runner. Product-specific functions such as OGM FC69 latest-state writes remain
 in the product adapter and are not silently treated as standard Modbus here.
-

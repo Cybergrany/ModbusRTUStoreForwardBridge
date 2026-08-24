@@ -254,6 +254,13 @@ void testDownstreamExecutor() {
   request.operation = static_cast<DownstreamOperation>(0xFFU);
   CHECK(executeDownstreamRequest(backend, request).result == -4);
   CHECK(backend.callCount == beforeInvalid);
+
+  request.operation = DownstreamOperation::WriteSingleCoil;
+  request.quantity = 0U;
+  const DownstreamCompletion<int> prevalidated =
+      executeValidatedDownstreamRequest(backend, request);
+  CHECK(prevalidated.result == 105);
+  CHECK(backend.callCount == beforeInvalid + 1U);
 }
 
 }  // namespace
@@ -265,4 +272,3 @@ int main() {
   printf("ModbusRTUStoreForwardBridge native checks: %u\n", g_checks);
   return 0;
 }
-

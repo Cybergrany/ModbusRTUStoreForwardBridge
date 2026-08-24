@@ -116,25 +116,10 @@ struct DownstreamCompletion {
 // Passing the complete request lets a backend interpret consistencyContext as
 // its native mutex/copy policy without exposing that platform type here.
 template<typename Backend>
-DownstreamCompletion<typename Backend::Result> executeDownstreamRequest(
+DownstreamCompletion<typename Backend::Result> executeValidatedDownstreamRequest(
     Backend& backend,
     const DownstreamRequest& request) {
   typedef typename Backend::Result Result;
-  const DownstreamRequestStatus validation =
-      validateDownstreamRequest(request);
-  if(validation == DownstreamRequestStatus::InvalidQuantity){
-    return DownstreamCompletion<Result>(
-        request.sequence, backend.invalidQuantityResult(), 0U);
-  }
-  if(validation == DownstreamRequestStatus::InvalidBuffer){
-    return DownstreamCompletion<Result>(
-        request.sequence, backend.invalidBufferResult(), 0U);
-  }
-  if(validation != DownstreamRequestStatus::Valid){
-    return DownstreamCompletion<Result>(
-        request.sequence, backend.invalidOperationResult(), 0U);
-  }
-
   Result result = backend.invalidOperationResult();
   switch(request.operation){
     case DownstreamOperation::ReadCoils:
@@ -167,5 +152,26 @@ DownstreamCompletion<typename Backend::Result> executeDownstreamRequest(
       request.sequence, result, backend.exceptionCode());
 }
 
-}  // namespace ModbusRTUBridge
+template<typename Backend>
+DownstreamCompletion<typename Backend::Result> executeDownstreamRequest(
+    Backend& backend,
+    const DownstreamRequest& request) {
+  typedef typename Backend::Result Result;
+  const DownstreamRequestStatus validation =
+      validateDownstreamRequest(request);
+  if(validation == DownstreamRequestStatus::InvalidQuantity){
+    return DownstreamCompletion<Result>(
+        request.sequence, backend.invalidQuantityResult(), 0U);
+  }
+  if(validation == DownstreamRequestStatus::InvalidBuffer){
+    return DownstreamCompletion<Result>(
+        request.sequence, backend.invalidBufferResult(), 0U);
+  }
+  if(validation != DownstreamRequestStatus::Valid){
+    return DownstreamCompletion<Result>(
+        request.sequence, backend.invalidOperationResult(), 0U);
+  }
+  return executeValidatedDownstreamRequest(backend, request);
+}
 
+}  // namespace ModbusRTUBridge
