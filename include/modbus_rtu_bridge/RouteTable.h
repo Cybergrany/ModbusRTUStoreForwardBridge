@@ -9,6 +9,12 @@
 
 #include <stdint.h>
 
+#if defined(__GNUC__) || defined(__clang__)
+#define MODBUS_RTU_BRIDGE_ROUTE_INLINE inline __attribute__((always_inline))
+#else
+#define MODBUS_RTU_BRIDGE_ROUTE_INLINE inline
+#endif
+
 namespace ModbusRTUBridge {
 
 enum class RegisterTable : uint8_t {
@@ -175,9 +181,10 @@ class RouteTableView {
   // zero-count routes to retain their sorted insertion-point start, so sparse
   // tables use the same logarithmic binary-search shape as populated tables
   // and as the legacy OGM bridge hot path.
-  bool locate(RegisterTable table,
-              uint16_t upstreamAddress,
-              uint16_t& routeIndexOut) const {
+  MODBUS_RTU_BRIDGE_ROUTE_INLINE bool locate(
+      RegisterTable table,
+      uint16_t upstreamAddress,
+      uint16_t& routeIndexOut) const {
     if(routes_ == nullptr){
       return false;
     }
@@ -300,3 +307,5 @@ class RouteTableView {
 };
 
 }  // namespace ModbusRTUBridge
+
+#undef MODBUS_RTU_BRIDGE_ROUTE_INLINE
