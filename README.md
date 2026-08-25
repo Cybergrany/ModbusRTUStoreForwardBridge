@@ -61,20 +61,21 @@ scheduler and wire timing while delegating the neutral calculations.
 
 ## Installation
 
-There is not yet a validated Stage C release. During local migration work, use
-an explicit path dependency so the module and consumer are tested together:
+Version `0.1.0` is the first Stage C hardware-accepted compatibility release.
+During local migration work, use an explicit path dependency so the module and
+consumer are tested together:
 
 ```ini
 lib_deps =
   symlink:///absolute/path/to/ModbusRTUStoreForwardBridge
 ```
 
-After a compatibility release is tagged, remote consumers must pin that tag or
-a full commit rather than a moving branch:
+After `v0.1.0` is published, remote consumers must pin that tag or its full
+resolved commit rather than a moving branch:
 
 ```ini
 lib_deps =
-  https://github.com/Cybergrany/ModbusRTUStoreForwardBridge.git#<validated-tag-or-40-char-commit>
+  https://github.com/Cybergrany/ModbusRTUStoreForwardBridge.git#v0.1.0
 ```
 
 Include only the contracts the adapter uses:
@@ -111,9 +112,19 @@ slave firmware.
 
 ## Status
 
-The public repository has been created for Stage C of the OGM Modbus
-separation, but no compatibility release is published yet. The current code is
-a software-validation candidate. It must not be described as hardware-
-validated or as a drop-in transparent Modbus proxy. A release tag will be
-created only after the exact OGM consumer and differential software gates are
-green; physical validation remains the following release gate.
+Version `0.1.0` closes Stage C of the OGM Modbus separation. The exact
+behavior-bearing module source accepted on hardware was
+`d15d9474be43205c4149a69c345d07c92cc2d098`, consumed by `OGM_bridge`
+`59311ac8027cd3a8f28ae40d6253a285c4b62224`. On 2026-08-25 that bridge ran
+against the unchanged deployed slave firmware with established-variance
+parity in the corrected 34.94-minute soak and no gameplay-visible regression.
+
+The `v0.1.0` tag may point at a later documentation-only release commit. That
+does not imply that a different implementation was tested: the hardware-tested
+library source remains the exact commit above. See
+[RELEASE_NOTES.md](RELEASE_NOTES.md) and
+[OGM_EXTRACTION_PROVENANCE.md](OGM_EXTRACTION_PROVENANCE.md) for the software
+and physical acceptance boundary.
+
+This acceptance applies to the asynchronous cached store-forward contract. It
+must not be presented as validation of a drop-in transparent Modbus proxy.

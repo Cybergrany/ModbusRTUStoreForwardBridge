@@ -20,6 +20,21 @@ consumer imports reviewed module snapshots as a subtree under
 `lib/ModbusRTUStoreForwardBridge` so its firmware build does not depend on an
 unpublished moving remote branch.
 
+## Stage C hardware-acceptance anchors
+
+| Purpose | Repository / commit |
+| --- | --- |
+| Exact behavior-bearing module source exercised on hardware | `ModbusRTUStoreForwardBridge` `d15d9474be43205c4149a69c345d07c92cc2d098` |
+| Exact bridge consumer exercised on hardware | `OGM_bridge` `59311ac8027cd3a8f28ae40d6253a285c4b62224` |
+| Downstream compatibility target | Existing deployed OGM slave firmware, unchanged for the Stage C run |
+
+The user accepted Stage C on 2026-08-25 after static/native/performance gates,
+gameplay observation and the corrected 34.94-minute bridge-only soak all showed
+behavior within the established variance. The `v0.1.0` tag may include this
+documentation-only closeout after `d15d9474`; it does not identify a second,
+separately hardware-tested implementation. Release audits must retain both the
+tag target and the exact behavior-bearing commit above.
+
 ## Preserved product semantics
 
 The OGM reference is asynchronous cached store-forward:
@@ -64,10 +79,16 @@ characterization suite freezes flattened cache, admission, snapshot, ordering,
 range, retry, timeout, reconnect and counter-rollover semantics in a separate
 fixed-capacity reference.
 
-Those tests do not by themselves prove that the production adapter delegates
-every path correctly, nor do they exercise UART interrupts, mbed scheduling,
+Those tests did not by themselves prove that the production adapter delegates
+every path correctly, nor did they exercise UART interrupts, mbed scheduling,
 serial drain, RS485 turnaround, T3.5 gaps or contention on the physical bus.
-Before requesting hardware validation, the exact consumer tree must pass
-differential trace/order tests, strict performance/footprint gates and all
-dependent firmware builds with an inferred no-wire delta. Stage C is not
-hardware-validated until that subsequent physical check is completed.
+The exact consumer tree therefore also passed its differential software gates
+before the bridge-only physical run described above. That run found no
+behavioral or gameplay-visible regression while retaining unchanged deployed
+slaves, and Stage C is accepted for the exact commits recorded here.
+
+This is compatibility evidence for the established OGM store-forward product,
+not proof of every possible bus topology, electrical fault or synchronous
+proxy use. Future behavior-bearing changes require their own proportional
+software and hardware validation; documentation-only release metadata does
+not broaden the tested claim.
