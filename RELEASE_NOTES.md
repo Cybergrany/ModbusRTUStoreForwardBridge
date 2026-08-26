@@ -1,5 +1,11 @@
 # Release notes
 
+## v0.1.2 - Installation-documentation correction
+
+This documentation-only follow-up makes the installation example point to the
+immutable release that contains it. Package metadata advances to `0.1.2`; all
+files under `include/` remain byte-identical to `v0.1.0` and `v0.1.1`.
+
 ## v0.1.1 - MIT and metadata follow-up
 
 This behavior-neutral follow-up releases the library under the MIT License,
