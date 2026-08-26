@@ -14,8 +14,8 @@ thread, clock or logging operations.
 | `DownstreamCompletion<Result>` | Returned by value. | None. | Delivery/order belong to the runner. |
 
 No contract makes a borrowed pointer safe after its owner returns, resizes,
-rebuilds topology or reuses a queue slot. In a threaded adapter, establish the
-same publication and lock ordering that existed before migration.
+rebuilds topology, or reuses a queue slot. A threaded adapter must define and
+preserve publication and lock ordering around every borrowed object.
 
 ## Route tables
 
@@ -113,8 +113,8 @@ coils.markApplied(8, admittedSnapshot, 3);
 coils.restore(8, 3); // visible image returns to last applied state
 ```
 
-The caller must retain the same lock scope as before migration. Copy methods do
-not lock and source/destination ranges must not overlap.
+The caller defines the lock scope. Copy methods do not lock, and source and
+destination ranges must not overlap.
 
 A typical product sequence is:
 
@@ -150,8 +150,8 @@ returns the request sequence, backend result and exception code together.
 An adapter that must retain an established validator/error-log path may call
 `executeValidatedDownstreamRequest()` after that validator succeeds. Its
 precondition is explicit: quantity, buffer and operation must already be valid.
-This prevents a migration adapter from performing the checks twice without
-moving its existing externally visible error classification.
+This lets an adapter retain its own validation and error classification without
+performing the same checks twice.
 
 ```cpp
 #include <modbus_rtu_bridge/DownstreamExecutor.h>
@@ -184,13 +184,13 @@ the matching invalid-result factory with exception code zero and performs no
 operation call.
 
 `consistencyContext` is never inspected by the core. If a backend casts it to
-a mutex/copy-policy type, that object must stay alive and correctly aligned
-until the synchronous backend call returns. Do not use it to smuggle OGM types
-into a public API wrapper.
+a mutex or copy-policy type, that object must stay alive and correctly aligned
+until the synchronous backend call returns. Keep application-specific types in
+the backend rather than exposing them through a reusable API wrapper.
 
-Queueing, retry counts, pacing, deadlines and worker priorities belong to the
-runner. Product-specific functions such as OGM FC69 latest-state writes remain
-in the product adapter and are not silently treated as standard Modbus here.
+Queueing, retry counts, pacing, deadlines, worker priorities, and nonstandard
+operations belong to the runner. They are not silently treated as standard
+Modbus operations here.
 
 The executor neither serializes an ADU nor defines Modbus quantity maxima. A
 product adapter that already applies stricter master-specific limits should

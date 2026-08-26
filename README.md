@@ -1,138 +1,149 @@
 # ModbusRTUStoreForwardBridge
 
-`ModbusRTUStoreForwardBridge` is a small, allocation-free C++11 core for an
-asynchronous Modbus RTU store-and-forward bridge. It deliberately does **not**
-implement a transparent nested Modbus proxy. An upstream slave exposes a local,
-flattened register image; accepted writes are captured as immutable work; a
-separate downstream master services child endpoints later.
+`ModbusRTUStoreForwardBridge` is a header-only C++11 core for asynchronous,
+cached Modbus gateways. It translates ranges from one local register image to
+downstream endpoints, tracks desired and applied values, and dispatches typed
+requests through a caller-provided backend.
 
-The library owns only reusable mechanics:
+It performs no serial I/O and is not a transparent Modbus proxy. The
+application owns request admission, storage, queues, scheduling, retries,
+logging, and completion policy.
 
-- ordered upstream-to-endpoint route translation;
-- non-owning cached register images;
-- typed downstream requests, validation and completion records;
-- consumption of caller-owned immutable ingress snapshots without taking
-  ownership of queues, journals or buffers.
+## When to use it
 
-Product policy stays outside the library. In particular, this module has no
-concept of OGM boards, generated children, gameplay state, load/reset/hash,
-health counters, public ACK debt, retries, worker threads, serial ports, or
-diagnostic logging. A product adapter decides when work runs and what a
-completion means.
+Use this library when:
 
-The first compatibility consumer is the existing OGM cached bridge. Its
-migration contract is intentionally strict: register offsets, request/response
-ADUs, admission-before-mutation ordering, immutable snapshots, downstream
-message ordering and old slave firmware compatibility must remain unchanged.
+- an upstream Modbus server must respond from a fast local cache;
+- downstream devices may be slower or temporarily unavailable;
+- one upstream range spans several downstream unit IDs or address ranges;
+- accepted writes must keep an immutable snapshot until a worker processes
+  them; or
+- the gateway must use fixed caller-owned storage with no dynamic allocation.
 
-Public API examples and invariants live beside each header under
-`include/modbus_rtu_bridge/`. Native characterization tests live under `test/`.
-`scripts/run_native_tests.sh` also runs a CPU-affined paired route-lookup gate;
-the median neutral/legacy ratio may not exceed 1.05.
+If every upstream request must synchronously proxy one downstream request,
+this is probably not the right abstraction.
 
-The extraction lineage and acceptance boundary are recorded in
-[OGM_EXTRACTION_PROVENANCE.md](OGM_EXTRACTION_PROVENANCE.md).
+## What this fork adds
 
-## What the integration owns
+- **Validated range routing.** `RouteTableView` checks sorted, non-overlapping
+  mappings and proves that a complete request is routable before returning any
+  segment. This prevents a cross-device write from being partly dispatched
+  before an unmapped gap is found. See
+  [`RouteTable.h`](include/modbus_rtu_bridge/RouteTable.h) and the
+  [route-table guide](include/modbus_rtu_bridge/README.md#route-tables).
+- **Desired/applied cache pairs.** `DesiredAppliedCache<T>` keeps the visible
+  local image separate from the last downstream-applied image. This supports
+  optimistic local writes, success commits, and caller-directed rollback. See
+  [`CacheImage.h`](include/modbus_rtu_bridge/CacheImage.h) and
+  [cached images](include/modbus_rtu_bridge/README.md#cached-images).
+- **Typed downstream execution.** `DownstreamRequest` covers standard coil and
+  register operations. The executor validates the request, makes exactly one
+  backend call, and returns the sequence, result, and exception together. See
+  [`DownstreamExecutor.h`](include/modbus_rtu_bridge/DownstreamExecutor.h) and
+  [downstream execution](include/modbus_rtu_bridge/README.md#downstream-execution).
+- **Explicit ownership.** All routes, images, request buffers, cursors, queue
+  entries, and synchronization remain caller-owned. There are no threads,
+  clocks, serial ports, virtual calls, or allocations hidden in the core. See
+  [the ownership table](include/modbus_rtu_bridge/README.md#ownership-and-concurrency).
+- **Bounded compatibility tests.** Native tests cover routing, gaps, overflow,
+  cache copies, validation, dispatch order, and a paired route-lookup
+  performance budget. See [Testing](#testing).
 
-The library is deliberately only the middle of a store-forward pipeline:
-
-```text
-upstream request
-      |
-      v
-product admission/journal reservation -> visible cache + immutable snapshot
-      |
-      v
-RouteTableView (prove whole downstream span) -> product bounded queue
-      |
-      v
-DownstreamExecutor -> product result policy
-                                                  |
-                                                  v
-                         markApplied / restore + ACK/fail/retry/recovery
-```
-
-The caller must preserve admission-before-mutation, complete-range validation,
-source ordering and the lifetime of every borrowed route, cache and request
-buffer. The library does not add a thread, a mutex, a retry or a serial write.
-That makes it possible for an existing runner to retain its established
-scheduler and wire timing while delegating the neutral calculations.
-
-## Installation
-
-Version `0.1.0` is the first Stage C hardware-accepted compatibility release.
-Version `0.1.1` retains the same public header implementation and adds the MIT
-license/release metadata. Version `0.1.2` corrects the immutable release's
-installation documentation, again without changing `include/`. During local
-migration work, use an explicit path dependency so the module and consumer are
-tested together:
-
-```ini
-lib_deps =
-  symlink:///absolute/path/to/ModbusRTUStoreForwardBridge
-```
-
-Remote consumers must pin the published `v0.1.2` tag or its full resolved
-commit rather than a moving branch:
-
-```ini
-lib_deps =
-  https://github.com/Cybergrany/ModbusRTUStoreForwardBridge.git#v0.1.2
-```
-
-Include only the contracts the adapter uses:
+## Quick start: route a flattened range
 
 ```cpp
 #include <modbus_rtu_bridge/RouteTable.h>
-#include <modbus_rtu_bridge/CacheImage.h>
-#include <modbus_rtu_bridge/DownstreamExecutor.h>
+
+using namespace ModbusRTUBridge;
+
+constexpr uint8_t kHolding =
+    static_cast<uint8_t>(RegisterTable::HoldingRegisters);
+
+EndpointRoute routes[2];
+
+void configureRoutes() {
+  routes[0].endpointId = 4;
+  routes[0].upstream[kHolding] = AddressRange(100, 4);
+  routes[0].downstream[kHolding] = AddressRange(0, 4);
+
+  routes[1].endpointId = 9;
+  routes[1].upstream[kHolding] = AddressRange(104, 3);
+  routes[1].downstream[kHolding] = AddressRange(20, 3);
+}
+
+bool dispatchRange(uint16_t start, uint16_t count) {
+  RouteTableView table(routes, 2);
+  if (table.validate() != RouteTableStatus::Valid) {
+    return false;
+  }
+
+  RouteCursor cursor;
+  if (table.beginSpan(RegisterTable::HoldingRegisters,
+                      start, count, cursor) != RoutedSpanStatus::Complete) {
+    return false;
+  }
+
+  RouteSegment segment;
+  while (table.next(cursor, segment)) {
+    // Queue segment.endpointId, segment.downstreamStart, and segment.count.
+    // segment.sourceOffset selects values from the immutable input snapshot.
+  }
+  return true;
+}
 ```
 
-All current headers are C++11, allocation-free and header-only. Storage,
-synchronization and platform services remain caller-owned.
+Call `validate()` after building or changing the route table and before
+accepting traffic. Keep route storage unchanged while a cursor is active.
 
-## Validation
+## Track visible and applied state
 
-Run the standalone native suite from the repository root:
+```cpp
+#include <modbus_rtu_bridge/CacheImage.h>
 
-```bash
+bool visible[32] = {};
+bool applied[32] = {};
+
+ModbusRTUBridge::DesiredAppliedCache<bool> coils(
+    ModbusRTUBridge::MutableImageView<bool>(visible, 32),
+    ModbusRTUBridge::MutableImageView<bool>(applied, 32));
+
+const bool snapshot[3] = {true, false, true};
+coils.captureDesired(8, snapshot, 3);  // accepted locally
+coils.markApplied(8, snapshot, 3);     // downstream success
+coils.restore(8, 3);                   // caller-selected rollback
+```
+
+The library does not lock these arrays. The caller must hold the appropriate
+lock around each logically atomic cache operation.
+
+## Store-and-forward flow
+
+A typical integration is:
+
+1. Validate an upstream write and reserve space for its immutable snapshot.
+2. Update the visible cache and publish work in the application's chosen
+   order.
+3. Prove complete route coverage, then split the snapshot into endpoint-local
+   segments.
+4. Run typed downstream requests from a caller-owned worker or cooperative
+   loop.
+5. Mark values applied, retry, or restore them according to application
+   policy.
+
+The detailed backend contract and examples are in the
+[public API guide](include/modbus_rtu_bridge/README.md).
+
+## Testing
+
+Run the standalone C++11 behavior and route-lookup performance checks:
+
+```sh
 scripts/run_native_tests.sh
 ```
 
-The script compiles the API suite as strict GNU C++11 at `-Os`, then runs a
-paired `-O2` route-lookup comparison. When `taskset` is available it pins the
-comparison to the first allowed CPU; `OGM_MODBUS_PERF_CPU=<cpu>` selects an
-explicit allowed CPU. The paired median candidate/legacy ratio must be at most
-`1.05`.
+These tests cover the platform-neutral core. Serial timing, queue scheduling,
+and electrical bus behavior belong to the application that integrates it.
 
-This gate checks deterministic API behavior and one synthetic host hot path.
-It does not execute an Arduino UART, the OGM worker queues, mbed scheduling,
-RS485 direction timing, serial drain, full bridge ADUs or bus contention. The
-consumer still needs differential ordering/trace tests, exact embedded builds,
-footprint review and physical RS485 validation with the deployed unchanged
-slave firmware.
+## License
 
-## Status
-
-Version `0.1.0` closes Stage C of the OGM Modbus separation. The exact
-behavior-bearing module source accepted on hardware was
-`d15d9474be43205c4149a69c345d07c92cc2d098`, consumed by `OGM_bridge`
-`59311ac8027cd3a8f28ae40d6253a285c4b62224`. On 2026-08-25 that bridge ran
-against the unchanged deployed slave firmware with established-variance
-parity in the corrected 34.94-minute soak and no gameplay-visible regression.
-
-The `v0.1.0` tag may point at a later documentation-only release commit. That
-does not imply that a different implementation was tested: the hardware-tested
-library source remains the exact commit above. See
-[RELEASE_NOTES.md](RELEASE_NOTES.md) and
-[OGM_EXTRACTION_PROVENANCE.md](OGM_EXTRACTION_PROVENANCE.md) for the software
-and physical acceptance boundary.
-
-This acceptance applies to the asynchronous cached store-forward contract. It
-must not be presented as validation of a drop-in transparent Modbus proxy.
-
-Version `0.1.1` adds MIT licensing and corrects package metadata and archive
-contents without changing the implementation accepted as `v0.1.0`.
-Version `0.1.2` corrects the immutable installation example; public headers
-remain byte-identical to both earlier releases.
+MIT. See [LICENSE](LICENSE).
