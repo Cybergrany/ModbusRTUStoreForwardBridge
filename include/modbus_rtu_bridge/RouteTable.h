@@ -180,7 +180,7 @@ class RouteTableView {
   // Locate the endpoint containing one upstream address. validate() requires
   // zero-count routes to retain their sorted insertion-point start, so sparse
   // tables use the same logarithmic binary-search shape as populated tables
-  // and as the legacy OGM bridge hot path.
+  // and as the bounded reference lookup used by the performance gate.
   MODBUS_RTU_BRIDGE_ROUTE_INLINE bool locate(
       RegisterTable table,
       uint16_t upstreamAddress,

@@ -31,7 +31,7 @@ compiler="${CXX:-g++}"
   -o "$build_dir/perf_main"
 
 if command -v taskset >/dev/null 2>&1; then
-  affinity_cpu="${OGM_MODBUS_PERF_CPU:-}"
+  affinity_cpu="${MBUS_RTU_BRIDGE_PERF_CPU:-}"
   if [[ -z "$affinity_cpu" ]]; then
     affinity_cpu="$(awk '/Cpus_allowed_list:/ { split($2, ranges, ","); split(ranges[1], first, "-"); print first[1]; exit }' /proc/self/status)"
   fi

@@ -15,12 +15,14 @@ static const uint8_t kSampleCount = 31U;
 volatile uint32_t g_sink = 0U;
 
 #if defined(__GNUC__)
-#define OGM_PERF_LOOKUP __attribute__((noinline, aligned(64)))
+#define MBUS_RTU_BRIDGE_PERF_LOOKUP __attribute__((noinline, aligned(64)))
 #else
-#define OGM_PERF_LOOKUP
+#define MBUS_RTU_BRIDGE_PERF_LOOKUP
 #endif
 
-OGM_PERF_LOOKUP bool legacyLocate(const EndpointRoute* routes,
+// Small standalone implementation of the documented lookup contract. It is a
+// stable performance baseline, not a second production implementation.
+MBUS_RTU_BRIDGE_PERF_LOOKUP bool baselineLocate(const EndpointRoute* routes,
                                   uint16_t routeCount,
                                   uint16_t address,
                                   uint16_t& indexOut) {
@@ -52,7 +54,7 @@ OGM_PERF_LOOKUP bool legacyLocate(const EndpointRoute* routes,
 // same code alignment. Otherwise unrelated compiler layout can make one
 // inlined loop straddle a cache/decoder boundary and intermittently look more
 // than five percent slower even when the lookup bodies are equivalent.
-OGM_PERF_LOOKUP bool candidateLocate(const RouteTableView& table,
+MBUS_RTU_BRIDGE_PERF_LOOKUP bool candidateLocate(const RouteTableView& table,
                                      uint16_t address,
                                      uint16_t& indexOut) {
   return table.locate(
@@ -118,7 +120,7 @@ int main() {
   // below still expose a sustained lookup cost.
   (void)runLane(
       [&](uint16_t address, uint16_t& index) {
-        return legacyLocate(routes, kRouteCount, address, index);
+        return baselineLocate(routes, kRouteCount, address, index);
       },
       addresses,
       64U);
@@ -130,15 +132,15 @@ int main() {
       64U);
 
   double ratios[kSampleCount];
-  double legacyTotal = 0.0;
+  double baselineTotal = 0.0;
   double candidateTotal = 0.0;
   for(uint8_t sample = 0U; sample < kSampleCount; ++sample){
-    double legacy = 0.0;
+    double baseline = 0.0;
     double candidate = 0.0;
     if((sample & 1U) == 0U){
-      legacy = runLane(
+      baseline = runLane(
           [&](uint16_t address, uint16_t& index) {
-            return legacyLocate(routes, kRouteCount, address, index);
+            return baselineLocate(routes, kRouteCount, address, index);
           },
           addresses,
           64U);
@@ -155,21 +157,21 @@ int main() {
           },
           addresses,
           64U);
-      legacy = runLane(
+      baseline = runLane(
           [&](uint16_t address, uint16_t& index) {
-            return legacyLocate(routes, kRouteCount, address, index);
+            return baselineLocate(routes, kRouteCount, address, index);
           },
           addresses,
           64U);
     }
-    ratios[sample] = candidate / legacy;
-    legacyTotal += legacy;
+    ratios[sample] = candidate / baseline;
+    baselineTotal += baseline;
     candidateTotal += candidate;
   }
   sort(ratios, kSampleCount);
   const double medianRatio = ratios[kSampleCount / 2U];
-  printf("route lookup: legacy=%.2f ns candidate=%.2f ns paired_median=%.4f sink=%lu\n",
-         legacyTotal / kSampleCount,
+  printf("route lookup: baseline=%.2f ns candidate=%.2f ns paired_median=%.4f sink=%lu\n",
+         baselineTotal / kSampleCount,
          candidateTotal / kSampleCount,
          medianRatio,
          static_cast<unsigned long>(g_sink));

@@ -63,9 +63,9 @@ not be partially dispatched and then rejected.
 Ordering includes zero-count mappings. For each register table, a zero-count
 `upstream` range must retain the sorted insertion-point address where that
 endpoint would occur; its `downstream.count` must also be zero. The empty range
-never matches an address, but its meaningful start lets sparse lookup retain
-the same binary-search shape as the legacy bridge instead of falling back to a
-linear scan. Do not leave an arbitrary/default zero start between later
+never matches an address, but its meaningful start lets sparse lookup remain
+logarithmic instead of falling back to a linear scan. Do not leave an
+arbitrary/default zero start between later
 populated mappings.
 
 Call `validate()` once after constructing/rebuilding topology and fail setup on

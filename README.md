@@ -45,7 +45,7 @@ this is probably not the right abstraction.
   entries, and synchronization remain caller-owned. There are no threads,
   clocks, serial ports, virtual calls, or allocations hidden in the core. See
   [the ownership table](include/modbus_rtu_bridge/README.md#ownership-and-concurrency).
-- **Bounded compatibility tests.** Native tests cover routing, gaps, overflow,
+- **Bounded regression tests.** Native tests cover routing, gaps, overflow,
   cache copies, validation, dispatch order, and a paired route-lookup
   performance budget. See [Testing](#testing).
 

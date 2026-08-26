@@ -2,10 +2,10 @@
 
 // Non-owning cached-image helpers for allocation-free store-forward bridges.
 //
-// CacheImage never locks. The product adapter retains ownership of memory and
-// chooses the same lock scope it used before migration. Keeping synchronization
-// outside this type avoids baking mbed, Arduino, RTOS, or OGM mutex concepts
-// into the reusable core.
+// CacheImage never locks. The adapter retains ownership of memory and chooses
+// the lock scope required by its consistency model. Keeping synchronization
+// outside this type avoids baking mbed, Arduino, RTOS, or application mutex
+// concepts into the reusable core.
 
 #include <stddef.h>
 #include <stdint.h>
@@ -114,4 +114,3 @@ class DesiredAppliedCache {
 };
 
 }  // namespace ModbusRTUBridge
-
