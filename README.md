@@ -62,20 +62,21 @@ scheduler and wire timing while delegating the neutral calculations.
 ## Installation
 
 Version `0.1.0` is the first Stage C hardware-accepted compatibility release.
-During local migration work, use an explicit path dependency so the module and
-consumer are tested together:
+Version `0.1.1` retains the same public header implementation and adds the MIT
+license/release metadata. During local migration work, use an explicit path
+dependency so the module and consumer are tested together:
 
 ```ini
 lib_deps =
   symlink:///absolute/path/to/ModbusRTUStoreForwardBridge
 ```
 
-Remote consumers must pin the published `v0.1.0` tag or its full resolved
+Remote consumers must pin the published `v0.1.1` tag or its full resolved
 commit rather than a moving branch:
 
 ```ini
 lib_deps =
-  https://github.com/Cybergrany/ModbusRTUStoreForwardBridge.git#v0.1.0
+  https://github.com/Cybergrany/ModbusRTUStoreForwardBridge.git#v0.1.1
 ```
 
 Include only the contracts the adapter uses:
