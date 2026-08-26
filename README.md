@@ -70,8 +70,8 @@ lib_deps =
   symlink:///absolute/path/to/ModbusRTUStoreForwardBridge
 ```
 
-After `v0.1.0` is published, remote consumers must pin that tag or its full
-resolved commit rather than a moving branch:
+Remote consumers must pin the published `v0.1.0` tag or its full resolved
+commit rather than a moving branch:
 
 ```ini
 lib_deps =
@@ -128,3 +128,8 @@ and physical acceptance boundary.
 
 This acceptance applies to the asynchronous cached store-forward contract. It
 must not be presented as validation of a drop-in transparent Modbus proxy.
+
+The manifest version is `0.1.1` on the development branch because package
+metadata and archive contents were corrected after `v0.1.0`. No `v0.1.1` tag
+should be published until the project owner selects and records the library's
+license; that legal choice is intentionally not inferred from the source.

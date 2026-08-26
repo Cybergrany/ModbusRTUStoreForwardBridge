@@ -15,10 +15,11 @@ product remained the behavioral reference.
 | Root of this new module's independent history | `b41be50` (`Initialize store-forward bridge module`) |
 
 The short root ID is unambiguous within this new repository; release records
-must use the full resolved commit and exact dependency locks. The bridge
-consumer imports reviewed module snapshots as a subtree under
-`lib/ModbusRTUStoreForwardBridge` so its firmware build does not depend on an
-unpublished moving remote branch.
+must use the full resolved commit and exact dependency locks. The initial
+bridge extraction used a reviewed vendored snapshot while the repository was
+being prepared. The accepted consumer now resolves the published module by
+its immutable full commit, so its firmware build does not depend on a moving
+remote branch.
 
 ## Stage C hardware-acceptance anchors
 

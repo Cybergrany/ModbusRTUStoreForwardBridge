@@ -1,5 +1,15 @@
 # Release notes
 
+## v0.1.1 - metadata follow-up (unreleased)
+
+This behavior-neutral follow-up records the canonical repository and
+maintainer, declares the public headers, and excludes repository-only test
+scripts from the PlatformIO archive. The implementation under `include/` is
+unchanged from `v0.1.0`.
+
+The release remains untagged until the project owner chooses a license. Keep
+the existing `v0.1.0` tag immutable.
+
 ## v0.1.0 - Stage C compatibility release
 
 `v0.1.0` is the first hardware-accepted release of the neutral
