@@ -1,14 +1,12 @@
 # Release notes
 
-## v0.1.1 - metadata follow-up (unreleased)
+## v0.1.1 - MIT and metadata follow-up
 
-This behavior-neutral follow-up records the canonical repository and
-maintainer, declares the public headers, and excludes repository-only test
-scripts from the PlatformIO archive. The implementation under `include/` is
-unchanged from `v0.1.0`.
-
-The release remains untagged until the project owner chooses a license. Keep
-the existing `v0.1.0` tag immutable.
+This behavior-neutral follow-up releases the library under the MIT License,
+records the canonical repository and maintainer, declares the public headers,
+and excludes repository-only test scripts from the PlatformIO archive. The
+implementation under `include/` is unchanged from `v0.1.0`; the existing
+`v0.1.0` tag remains immutable.
 
 ## v0.1.0 - Stage C compatibility release
 

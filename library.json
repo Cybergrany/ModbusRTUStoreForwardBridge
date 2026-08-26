@@ -19,6 +19,7 @@
       "maintainer": true
     }
   ],
+  "license": "MIT",
   "frameworks": "*",
   "platforms": "*",
   "headers": [
