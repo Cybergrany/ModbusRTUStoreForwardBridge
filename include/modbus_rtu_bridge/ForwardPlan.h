@@ -25,6 +25,16 @@ enum class ForwardSpanPolicy : uint8_t {
   PreflightAndSplit = 1U,
 };
 
+inline bool isKnownForwardSpanPolicy(ForwardSpanPolicy policy) {
+  switch(policy){
+    case ForwardSpanPolicy::SingleEndpoint:
+    case ForwardSpanPolicy::PreflightAndSplit:
+      return true;
+    default:
+      return false;
+  }
+}
+
 struct ForwardPlanOptions {
   uint16_t maxCoilsPerRequest;
   uint16_t maxHoldingRegistersPerRequest;
@@ -59,6 +69,7 @@ enum class ForwardPlanStatus : uint8_t {
   AddressOverflow,
   Gap,
   MultipleEndpointsNotAllowed,
+  InvalidPolicy,
 };
 
 enum class ForwardNextStatus : uint8_t {
@@ -265,18 +276,25 @@ class ForwardPlanner {
     const ForwardSpanPolicy spanPolicy = isLatestState(work.delivery)
         ? options_.latestStateSpanPolicy
         : options_.orderedSpanPolicy;
-    if(spanPolicy == ForwardSpanPolicy::SingleEndpoint){
-      uint16_t routeIndex = 0U;
-      if(!routes_.locate(table, work.start, routeIndex)){
-        return ForwardPlanStatus::Gap;
+    switch(spanPolicy){
+      case ForwardSpanPolicy::SingleEndpoint: {
+        uint16_t routeIndex = 0U;
+        if(!routes_.locate(table, work.start, routeIndex)){
+          return ForwardPlanStatus::Gap;
+        }
+        const AddressRange& endpointRange =
+            routes_.data()[routeIndex].upstream[static_cast<uint8_t>(table)];
+        const uint32_t workEnd = static_cast<uint32_t>(work.start) +
+                                 static_cast<uint32_t>(work.count);
+        if(workEnd > endpointRange.end()){
+          return ForwardPlanStatus::MultipleEndpointsNotAllowed;
+        }
+        break;
       }
-      const AddressRange& endpointRange =
-          routes_.data()[routeIndex].upstream[static_cast<uint8_t>(table)];
-      const uint32_t workEnd =
-          static_cast<uint32_t>(work.start) + static_cast<uint32_t>(work.count);
-      if(workEnd > endpointRange.end()){
-        return ForwardPlanStatus::MultipleEndpointsNotAllowed;
-      }
+      case ForwardSpanPolicy::PreflightAndSplit:
+        break;
+      default:
+        return ForwardPlanStatus::InvalidPolicy;
     }
 
     cursor.work = work;

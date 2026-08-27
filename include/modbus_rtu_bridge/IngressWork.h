@@ -47,8 +47,28 @@ inline IngressDelivery classifyAcceptedIngress(bool latestState,
   return IngressDelivery::Tracked;
 }
 
+inline bool isKnownIngressDelivery(IngressDelivery delivery) {
+  switch(delivery){
+    case IngressDelivery::Tracked:
+    case IngressDelivery::SilentOrdered:
+    case IngressDelivery::LatestState:
+    case IngressDelivery::Rejected:
+      return true;
+    default:
+      return false;
+  }
+}
+
 inline bool isAccepted(IngressDelivery delivery) {
-  return delivery != IngressDelivery::Rejected;
+  switch(delivery){
+    case IngressDelivery::Tracked:
+    case IngressDelivery::SilentOrdered:
+    case IngressDelivery::LatestState:
+      return true;
+    case IngressDelivery::Rejected:
+    default:
+      return false;
+  }
 }
 
 inline bool isLatestState(IngressDelivery delivery) {

@@ -181,7 +181,8 @@ sequence.
 
 `ForwardPlanner::begin()` checks the complete range before activating a
 caller-owned cursor. It returns no partial plan for a gap, overflow, rejected
-work, invalid quantity limits, or a forbidden cross-endpoint ordered write.
+work, invalid quantity limits or policies, or a forbidden cross-endpoint
+ordered write. Unknown enum values fail closed.
 
 ```cpp
 #include <modbus_rtu_bridge/ForwardPlan.h>

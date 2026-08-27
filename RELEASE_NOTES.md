@@ -14,7 +14,8 @@ Added allocation-free planning contracts for building a cached forwarder:
 
 Existing route, cache, and downstream-executor APIs are unchanged. The new
 planner does not add a queue, worker, clock, retry, serial operation, or payload
-copy.
+copy. Unknown ingress-delivery and span-policy enum values fail closed rather
+than being treated as accepted or splittable work.
 
 ## v0.1.2
 

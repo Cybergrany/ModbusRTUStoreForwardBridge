@@ -78,6 +78,11 @@ void testIngressDeliveryIdentityAndSession() {
 
   CHECK(isAccepted(IngressDelivery::Tracked));
   CHECK(!isAccepted(IngressDelivery::Rejected));
+  CHECK(isKnownIngressDelivery(IngressDelivery::LatestState));
+  const IngressDelivery malformedDelivery =
+      static_cast<IngressDelivery>(0xFFU);
+  CHECK(!isKnownIngressDelivery(malformedDelivery));
+  CHECK(!isAccepted(malformedDelivery));
   CHECK(tracksPublicCompletion(IngressDelivery::Tracked));
   CHECK(!tracksPublicCompletion(IngressDelivery::SilentOrdered));
   CHECK(requiresOrderedDelivery(IngressDelivery::SilentOrdered));
@@ -129,6 +134,8 @@ void testIngressDeliveryIdentityAndSession() {
   CHECK(!invalid.validAcceptedShape());
   invalid = valid;
   invalid.delivery = IngressDelivery::Rejected;
+  CHECK(!invalid.validAcceptedShape());
+  invalid.delivery = malformedDelivery;
   CHECK(!invalid.validAcceptedShape());
 }
 
@@ -225,6 +232,29 @@ void testPlannerPreflightsCompleteRangeAtomically() {
   rejected.delivery = IngressDelivery::Rejected;
   CHECK(planner.begin(rejected, staleCursor) ==
         ForwardPlanStatus::NotAccepted);
+  rejected.delivery = static_cast<IngressDelivery>(0xFFU);
+  CHECK(planner.begin(rejected, staleCursor) ==
+        ForwardPlanStatus::NotAccepted);
+
+  const ForwardSpanPolicy malformedPolicy =
+      static_cast<ForwardSpanPolicy>(0xFFU);
+  CHECK(!isKnownForwardSpanPolicy(malformedPolicy));
+  ForwardPlanner invalidOrderedPolicy(
+      contiguousTable,
+      ForwardPlanOptions(
+          8U, 8U,
+          malformedPolicy,
+          ForwardSpanPolicy::PreflightAndSplit));
+  CHECK(invalidOrderedPolicy.begin(ordered, staleCursor) ==
+        ForwardPlanStatus::InvalidPolicy);
+  ForwardPlanner invalidLatestPolicy(
+      contiguousTable,
+      ForwardPlanOptions(
+          8U, 8U,
+          ForwardSpanPolicy::SingleEndpoint,
+          malformedPolicy));
+  CHECK(invalidLatestPolicy.begin(latest, staleCursor) ==
+        ForwardPlanStatus::InvalidPolicy);
 
   ForwardPlanner invalidLimits(contiguousTable, ForwardPlanOptions());
   CHECK(invalidLimits.begin(latest, staleCursor) ==
@@ -559,6 +589,16 @@ void testCompletionDecisionsAndCacheTransitions() {
       CompletionRecord(first.identity, DownstreamOutcome::Applied),
       ready,
       wrongAggregate);
+  CHECK(decision.status == CompletionDecisionStatus::AggregateMismatch);
+
+  CompletionAggregate malformedAggregate(
+      tracked.identity, static_cast<IngressDelivery>(0xFFU));
+  CHECK(!malformedAggregate.valid());
+  decision = resolveCompletion(
+      first,
+      CompletionRecord(first.identity, DownstreamOutcome::Applied),
+      ready,
+      malformedAggregate);
   CHECK(decision.status == CompletionDecisionStatus::AggregateMismatch);
 }
 
