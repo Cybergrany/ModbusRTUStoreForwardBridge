@@ -21,6 +21,19 @@ compiler="${CXX:-g++}"
 
 "$compiler" \
   -std=c++11 \
+  -Os \
+  -Wall \
+  -Wextra \
+  -Werror \
+  -pedantic-errors \
+  -I"$repo_dir/include" \
+  "$repo_dir/test/engine_main.cpp" \
+  -o "$build_dir/engine_main"
+
+"$build_dir/engine_main"
+
+"$compiler" \
+  -std=c++11 \
   -O2 \
   -Wall \
   -Wextra \
