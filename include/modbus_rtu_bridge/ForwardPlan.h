@@ -151,6 +151,25 @@ struct PlannedWriteRequest {
         finalFragment(false) {}
 };
 
+// Exact equality for caller-retained request records. Completion ledgers use
+// this to prove that the expected request is the same immutable description
+// recorded at downstream admission, rather than trusting only its identity.
+inline bool samePlannedWriteRequest(const PlannedWriteRequest& lhs,
+                                    const PlannedWriteRequest& rhs) {
+  return sameRequestIdentity(lhs.identity, rhs.identity) &&
+         lhs.delivery == rhs.delivery && lhs.table == rhs.table &&
+         lhs.operation == rhs.operation && lhs.routeIndex == rhs.routeIndex &&
+         lhs.endpointId == rhs.endpointId &&
+         lhs.upstreamStart == rhs.upstreamStart &&
+         lhs.downstreamStart == rhs.downstreamStart &&
+         lhs.quantity == rhs.quantity && lhs.sourceOffset == rhs.sourceOffset &&
+         lhs.coilValues == rhs.coilValues &&
+         lhs.holdingValues == rhs.holdingValues &&
+         lhs.coilValue == rhs.coilValue &&
+         lhs.holdingValue == rhs.holdingValue &&
+         lhs.finalFragment == rhs.finalFragment;
+}
+
 template<typename Value>
 struct ForwardCursor {
   IngressWorkView<Value> work;

@@ -1,8 +1,8 @@
 {
   "$schema": "https://raw.githubusercontent.com/platformio/platformio-core/develop/platformio/assets/schema/library.json",
   "name": "ModbusRTUStoreForwardBridge",
-  "version": "0.2.0",
-  "description": "Allocation-free C++11 core for cached Modbus RTU store-and-forward bridges",
+  "version": "0.3.0",
+  "description": "Allocation-free C++11 planning and cooperative orchestration for cached Modbus RTU bridges",
   "keywords": [
     "modbus",
     "rtu",
@@ -28,7 +28,12 @@
     "modbus_rtu_bridge/DownstreamExecutor.h",
     "modbus_rtu_bridge/IngressWork.h",
     "modbus_rtu_bridge/ForwardPlan.h",
-    "modbus_rtu_bridge/CompletionTransition.h"
+    "modbus_rtu_bridge/CompletionTransition.h",
+    "modbus_rtu_bridge/FixedStorage.h",
+    "modbus_rtu_bridge/CompletionLedger.h",
+    "modbus_rtu_bridge/PollPlanner.h",
+    "modbus_rtu_bridge/StoreForwardBridge.h",
+    "modbus_rtu_bridge/adapters/ModbusRTUMasterBackend.h"
   ],
   "export": {
     "exclude": [

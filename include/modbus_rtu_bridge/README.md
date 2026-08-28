@@ -1,8 +1,10 @@
 # Public API guide
 
-All APIs in this directory are allocation-free, C++11-compatible and
-platform-neutral. They operate on caller-owned storage and perform no serial,
-thread, clock or logging operations.
+All APIs in this directory are C++11-compatible and platform-neutral. The core
+does not invoke an allocator and operates on caller-owned storage. A generic
+`FixedRingQueue<T>` assigns `T`, so a user-defined allocating assignment remains
+that type's behavior; the provided bridge record types allocate nothing. The
+library performs no serial, thread, clock or logging operations.
 
 ## Ownership and concurrency
 
@@ -13,12 +15,24 @@ thread, clock or logging operations.
 | `IngressWorkView<T>` | Caller owns the immutable payload for the full work lifetime. | None. The view stores identity, range, delivery, pointer, and count. | Admission, publication, and payload lifetime belong to the caller. |
 | `ForwardCursor<T>` / `PlannedWriteRequest` | Caller owns cursor, request, route storage, and borrowed payload. | None. Planning reads the snapshot in place. | Do not mutate topology or payload until all planned requests finish. |
 | `CompletionAggregate` | Caller owns one aggregate per logical work item. | Two serials and bounded scalar state; no fragment allocation. | Resolve completions in planner order under the caller's queue/cache policy. |
+| `FixedRingQueue<T>` | Caller supplies an already-constructed `T[]`. | Head/size counters only. | Serialize producers/consumers externally. Stored pointers retain their original lifetime rules. |
+| `CompletionLedger` | Caller supplies `CompletionLedgerSlot[]`. | A bounded linear lookup and one exact in-flight request per occupied work slot. | One outstanding fragment per work; different work slots may be active concurrently. |
+| `PollPlanner` | Caller owns `PollPlannerState` and optional `PollScanCursor`. | Options only; no clock. | `select()`/scan are read-only. Commit persistent state only when a phase is consumed. |
+| `StoreForwardBridge` | Caller supplies `StoreForwardWorkSlot[]` and a ledger. | FIFO/scalar state plus one retained exact admitted action. | Serialize all calls. Cross-thread execution must publish an immutable action copy. |
 | `DownstreamRequest` | Caller owns request and pointed-to buffers. | None. `consistencyContext` is an untyped borrowed hook. | Queue, request-buffer lifetime and any backend lock belong to the adapter. |
 | `DownstreamCompletion<Result>` | Returned by value. | None. | Delivery/order belong to the runner. |
 
 No contract makes a borrowed pointer safe after its owner returns, resizes,
 rebuilds topology, or reuses a queue slot. A threaded adapter must define and
 preserve publication and lock ordering around every borrowed object.
+
+In particular, a snapshot admitted to `StoreForwardBridge` stays immutable
+until `complete()` reports `workRetired`, `discardOneStaleWork()` or
+`abandonFront()` returns `Retired`, or a pooled-lifetime `reset()` completes.
+All fields in a previewed/admitted `StoreForwardAction`, and the borrowed
+payload contents they reference, stay unchanged until `complete()` returns.
+`userContext` and `consistencyContext` are opaque borrowed pointers; their
+pointees must outlive their last use.
 
 ## Route tables
 
@@ -217,6 +231,96 @@ the request beside its queue entry so its exact identity can be checked at
 completion. Planning performs no payload copy. Route storage must have passed
 `validate()` and remain unchanged for the complete plan lifetime.
 
+## Bounded storage and completion ledger
+
+`FixedRingQueue<T>` puts FIFO metadata around an array you provide. Capacity is
+known at compile/setup time and a full queue fails without overwriting its
+oldest entry:
+
+```cpp
+#include <modbus_rtu_bridge/FixedStorage.h>
+
+StoreForwardAction actionStorage[4];
+FixedRingQueue<StoreForwardAction> actions(actionStorage, 4);
+
+if (!actions.tryPush(action)) {
+  // Keep the proposal uncommitted; no cursor or completion debt moved.
+}
+
+StoreForwardAction next;
+if (actions.tryPop(next)) {
+  // The queue copied the description, not its pointed-to payload.
+}
+```
+
+The backing array contains already-constructed objects. `clear()` resets queue
+metadata; it does not call destructors. This container is intended for scalar,
+view and request records. It does not add locking or extend pointer lifetimes.
+The queue itself never calls an allocator, but `T::operator=` may do so for a
+user-defined owning type.
+
+`CompletionLedger` tracks several logical work items in caller-owned slots. It
+stores the exact request recorded at admission, rejects a fabricated request
+with the same identity, and separates early result settlement from full debt
+drain:
+
+```cpp
+#include <modbus_rtu_bridge/CompletionLedger.h>
+
+CompletionLedgerSlot ledgerStorage[4];
+CompletionLedger ledger(ledgerStorage, 4);
+
+ledger.reserve(work.identity, work.delivery);
+
+// Call only after this exact request enters downstream execution.
+ledger.recordIssued(planned);
+
+// Retry outside the ledger. Resolve once with the terminal result.
+LedgerResolution result = ledger.resolve(
+    planned,
+    CompletionRecord(planned.identity, DownstreamOutcome::SendUncertain),
+    session);
+
+if (result.status == LedgerResolveStatus::Resolved &&
+    result.summary.settled) {
+  // result.summary.outcome keeps the exact certainty class.
+}
+
+// Stop issuing later fragments after failure. Release only after all recorded
+// requests drain; the cooperative facade performs these two steps for you.
+ledger.closePlanningAfterFailure(work.identity);
+if (ledger.summary(work.identity, result.summary) && result.summary.drained) {
+  ledger.release(work.identity);
+}
+```
+
+Each work slot permits one outstanding fragment. Different work slots may have
+requests outstanding at the same time. This bound avoids a fragment bitmap or
+second request pool and matches an ordered cooperative/single-runner path.
+Resolve one fragment before recording the next fragment for the same work.
+Lookup is a bounded linear scan of at most the caller-selected capacity; the
+native performance gate exercises record/resolve against both the first and
+last occupied slots of a 16-slot ledger.
+
+`WorkCompletionOutcome` reports:
+
+| Outcome | Meaning |
+| --- | --- |
+| `Pending` | No terminal logical result is known yet. |
+| `Applied` | Every issued/planned fragment applied and the work drained. |
+| `DefinitelyNotSent` | Failure policy proved the failed request never reached the wire. |
+| `UncertainSend` | The endpoint may or may not have observed the request. |
+| `TerminalFailure` | A sent request is known not to have applied. |
+
+A failure settles the result immediately, but its slot remains occupied until
+planning is closed and every recorded request drains. Failure never restores
+desired state. Direct ledger users may call `abandonGeneration()` or
+`abandonNotCurrent()` when completions can never become current; these
+operations discard outstanding debt and are not normal failure handling. Do
+not call them on a ledger currently owned by `StoreForwardBridge`, because that
+would desynchronize the facade's FIFO. Use the facade retirement methods
+instead.
+
 ## Completion handling
 
 `CompletionAggregate` prevents a multi-fragment success from being announced
@@ -271,6 +375,187 @@ overlapping work items. The caller must preserve their downstream order,
 coalesce them before dispatch, or reject an older completion using its own
 range/endpoint watermark. `workIdentityBefore()` provides wrap-safe token
 comparison within one session for that policy.
+
+## Poll planning and fairness
+
+`PollPlanner` is a pure selector over caller-supplied time. It has no timer and
+does not queue or execute a request. `select()` balances one ready forward write
+against due polls. `PollPlannerOptions::maxConsecutiveForwards` limits how many
+forward phases may be consumed since the last poll before a due poll wins. Zero
+gives a due poll immediate priority.
+
+Selection and consumption are separate:
+
+```cpp
+#include <modbus_rtu_bridge/PollPlanner.h>
+
+PollPlanner planner(PollPlannerOptions(2));
+PollPlannerState state;
+PollSelection selected;
+
+if (planner.select(now, forwardReady, polls, pollCount, state, selected) ==
+    PollSelectStatus::Selected) {
+  if (executionCapacityAvailable(selected)) {
+    // Commit only after queue admission, or after policy deliberately consumes
+    // a no-dispatch poll phase.
+    planner.commit(selected, pollCount, now, state);
+  }
+}
+```
+
+If queue admission fails, do not call `commit()`: the persistent cursor,
+forward burst and `lastPollAt` stay unchanged. A `PollCandidate` with
+`requiresDispatch == false` represents an intentional adaptive/policy skip.
+Committing it still advances the round-robin cursor and `lastPollAt`; it does
+not imply a Modbus frame was sent. Selections returned by `select()` and
+`nextDue()` remember their originating `pollCount`; `commit()` rejects them if
+the candidate-set size changed after selection.
+
+Low-RAM handlers need not build a `PollCandidate[]`. The transient index scan
+stores no requests and lets one candidate be declined without reselecting it in
+the same handler pass:
+
+```cpp
+PollScanCursor scan;
+planner.beginPollScan(childCount, state, scan);
+
+uint16_t index;
+while (planner.nextIndex(scan, index) == PollScanIndexStatus::Candidate) {
+  if (!childEnabled(index) || !pollDeadlineReached32(now, dueAt(index))) {
+    continue;
+  }
+
+  const PollAttempt attempt = tryPollChild(index);
+  if (attempt == PollAttempt::NotConsumed) {
+    continue;  // transient scan moves on; persistent state is unchanged
+  }
+  if (attempt == PollAttempt::QueueRejected) {
+    break;     // discard scan; do not commit
+  }
+
+  planner.commit(PollSelection::fromCandidateSet(
+                     ScheduledActionKind::Poll, index, childCount),
+                 childCount, now, state);
+  break;
+}
+```
+
+The two-argument `PollSelection(kind, index)` remains unbound for applications
+that perform their own selection and count validation. Prefer
+`fromCandidateSet()` when a manual index scan should reject a changed count.
+
+`nextDue()` is the convenient array-backed form used by the facade. After a
+poll commit, refresh that candidate's `dueAt` or `enabled` state before another
+selection. The planner deliberately has no one-poll-per-timestamp restriction,
+so separate hard-deadline and cadence phases may both run at the same caller
+timestamp. Deadlines use modular 32-bit half-range comparison; `now` and
+`dueAt` must remain less than `2^31` caller ticks apart.
+
+## Cooperative StoreForwardBridge
+
+`StoreForwardBridge` combines the planner, bounded FIFO, ledger and poll
+fairness state without owning a worker. Coil and holding-register admission
+overloads enter the same FIFO and request-sequence domain, so their source order
+is preserved.
+
+```cpp
+#include <modbus_rtu_bridge/StoreForwardBridge.h>
+
+StoreForwardWorkSlot workStorage[4];
+CompletionLedgerSlot ledgerStorage[4];
+CompletionLedger ledger(ledgerStorage, 4);
+StoreForwardBridge bridge(
+    ForwardPlanner(routes, ForwardPlanOptions(64, 32)),
+    workStorage, 4, ledger,
+    PollPlanner(PollPlannerOptions(2)));
+
+const SessionStateView session(true, generation, generation,
+                               SessionPhase::Ready);
+bridge.admitWork(holdingWork, session, optionalUserContext);
+bridge.admitWork(coilWork, session);  // shares order with holdingWork
+
+StoreForwardAction action;
+if (bridge.nextAction(session, now, polls, pollCount, action,
+                      optionalConsistencyContext) ==
+    StoreForwardNextStatus::Ready) {
+  // Reserve runner/transport capacity first. A rejected preview changes no
+  // bridge state and may simply be retried later.
+  const StoreForwardActionAdmitStatus admitted =
+      bridge.admitAction(action, session, polls, pollCount);
+
+  if (admitted == StoreForwardActionAdmitStatus::Consumed) {
+    // A policy-gated poll phase advanced fairness without a wire request.
+  } else if (admitted == StoreForwardActionAdmitStatus::Admitted) {
+    // Keep action and every borrowed pointer immutable. Execute
+    // action.downstream, perform retries contiguously outside the library, then
+    // provide exactly one terminal certainty class.
+    const StoreForwardCompletion result = bridge.complete(
+        action, DownstreamOutcome::Applied, session);
+
+    if (result.kind == ScheduledActionKind::ForwardWrite &&
+        result.decision.current()) {
+      applyAppliedImageTransition(registerCache,
+                                  action.write,
+                                  result.decision);
+    }
+  }
+}
+```
+
+The two-phase contract is intentional:
+
+1. `nextAction()` previews without changing the queue, ledger, sequence or poll
+   cursor.
+2. `admitAction()` re-runs selection/planning against the supplied current
+   session and poll candidates, compares the complete proposal, then commits
+   one next cursor and one exact ledger request.
+3. `complete()` compares against the facade's retained exact admitted action
+   before clearing in-flight state or resolving the ledger.
+
+Pass the same candidate set used to preview into `admitAction()`, and keep route
+topology, candidates, snapshot pointers and payload contents stable between
+preview and admission. `selectedAt` and `writeConsistencyContext` are caller
+inputs carried in the proposal; revalidation checks that they are used
+consistently, not that they came from an authenticated clock or lock source.
+
+Only one action is in flight per facade. That keeps retries contiguous and
+lets one exact request per work slot validate completion with no fragment
+bitmap. `complete()` must receive a terminal post-retry outcome. On the first
+terminal write failure, the facade emits any owed failure notice, closes
+planning, stops unissued fragments, retires the drained work and leaves desired
+cache state unchanged. It never retries or rolls back automatically.
+
+`userContext` is returned with actions/completions for caller metadata; it is
+never interpreted. Work identities must be unique across both coil and holding
+work in a facade session because both tables intentionally share one FIFO and
+ledger domain.
+
+Stale generation completion is rejected before cache or notice changes, then
+retired. In that `StaleSession` result, `workRetired == true` is the current
+lifetime fact; the accompanying `work` summary is a diagnostic snapshot taken
+before abandonment and may still show outstanding, undrained debt. For idle
+work, retire one front item at a time so the caller can reclaim each borrowed
+snapshot safely:
+
+```cpp
+StoreForwardRetirement retired;
+while (bridge.discardOneStaleWork(currentSession, retired) ==
+       StoreForwardRetireStatus::Retired) {
+  releaseSnapshot(retired.work, retired.userContext);
+}
+
+// Explicit cancellation has the same one-item ownership handoff.
+if (bridge.abandonFront(retired) == StoreForwardRetireStatus::Retired) {
+  releaseSnapshot(retired.work, retired.userContext);
+}
+```
+
+Both retirement methods refuse to run while an action is in flight.
+`discardOneStaleWork()` also refuses to remove a current-generation front
+item. `reset()` is a bulk convenience that returns no per-work contexts; use it
+only when every queued snapshot shares a pool or other lifetime that can be
+reclaimed as a whole after reset succeeds. Serialize facade calls externally
+if preview, admission, execution and completion cross threads.
 
 ## Downstream execution
 
@@ -340,3 +625,47 @@ product adapter that already applies stricter master-specific limits should
 retain that validator and use `executeValidatedDownstreamRequest()` only after
 it succeeds. This preserves the established error/log path and avoids a second
 validation pass; calling the validated form with bad data is a caller bug.
+
+## Optional ModbusRTUMaster adapter
+
+`adapters/ModbusRTUMasterBackend.h` maps the conventional eight
+`ModbusRTUMaster` methods to the executor contract. The adapter header does not
+include or require that library, so include the concrete master first and
+instantiate the template only when needed:
+
+```cpp
+#include <ModbusRTUMaster.h>
+#include <modbus_rtu_bridge/adapters/ModbusRTUMasterBackend.h>
+
+using namespace ModbusRTUBridge;
+
+ModbusRTUMasterResultCodes<ModbusRTUMasterError> invalidResults(
+    MODBUS_RTU_MASTER_INVALID_QUANTITY,
+    MODBUS_RTU_MASTER_INVALID_BUFFER,
+    MODBUS_RTU_MASTER_UNEXPECTED_FUNCTION_CODE);
+
+ModbusRTUMasterBackend<ModbusRTUMaster, ModbusRTUMasterError> backend(
+    master, invalidResults);
+
+const DownstreamCompletion<ModbusRTUMasterError> result =
+    executeDownstreamRequest(backend, action.downstream);
+```
+
+Map `result.result` and transport evidence to `DownstreamOutcome` only after
+your retry policy finishes. A timeout after transmission is normally
+`SendUncertain`, while local validation before transmission can be
+`DefinitelyNotSent`; do not infer certainty from the error enum alone unless
+the transport contract proves it.
+
+A unit-zero broadcast or any no-response master call needs special care. A
+master-level success normally proves only that the frame entered/completed the
+transmit path; it does not prove that any endpoint applied the write. Do not map
+that result to `DownstreamOutcome::Applied` without independent application or
+readback evidence. `SilentOrdered` suppresses a public completion; it does not
+turn transmit admission into an endpoint acknowledgement.
+
+The thin adapter calls the standard methods without a platform-specific mutex
+argument. If your master integration uses `consistencyContext`, custom lock
+types, targeted broadcasts or another nonstandard operation, implement the
+small backend contract directly. That keeps platform types and optional APIs
+out of this package.

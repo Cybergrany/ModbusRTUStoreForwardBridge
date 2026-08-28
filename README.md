@@ -3,12 +3,13 @@
 `ModbusRTUStoreForwardBridge` is a header-only C++11 core for asynchronous,
 cached Modbus gateways. It translates ranges from one local register image to
 downstream endpoints, plans deterministic endpoint-local writes, tracks desired
-and applied values, and dispatches typed requests through a caller-provided
-backend.
+and applied values, and can coordinate bounded work and polling through a
+caller-driven facade.
 
 It performs no serial I/O and is not a transparent Modbus proxy. The
-application owns request admission, storage, queues, scheduling, retries,
-logging, and failure/rollback policy.
+application supplies storage arrays, time values, execution capacity and a
+backend. Threads, serial pacing, retries, logging and rollback policy remain in
+the application.
 
 ## When to use it
 
@@ -61,13 +62,37 @@ this is probably not the right abstraction.
   proof. See
   [`CompletionTransition.h`](include/modbus_rtu_bridge/CompletionTransition.h)
   and [completion handling](include/modbus_rtu_bridge/README.md#completion-handling).
-- **Explicit ownership.** All routes, images, request buffers, cursors, queue
-  entries, and synchronization remain caller-owned. There are no threads,
-  clocks, serial ports, virtual calls, or allocations hidden in the core. See
+- **Bounded storage and completion debt.** `FixedRingQueue<T>` reuses a
+  caller-supplied array. `CompletionLedger` tracks several logical writes,
+  validates the exact admitted request, and keeps failure certainty explicit.
+  See [`FixedStorage.h`](include/modbus_rtu_bridge/FixedStorage.h),
+  [`CompletionLedger.h`](include/modbus_rtu_bridge/CompletionLedger.h), and
+  [bounded storage and ledger usage](include/modbus_rtu_bridge/README.md#bounded-storage-and-completion-ledger).
+- **Configurable poll fairness.** `PollPlanner` selects due endpoints in
+  round-robin order and limits forward-write bursts. Its two-phase API advances
+  persistent state only when a phase is consumed. An index-only scan supports
+  low-RAM hot paths. See
+  [`PollPlanner.h`](include/modbus_rtu_bridge/PollPlanner.h) and
+  [poll planning](include/modbus_rtu_bridge/README.md#poll-planning-and-fairness).
+- **Cooperative bridge facade.** `StoreForwardBridge` keeps coil and holding
+  writes in one FIFO/sequence domain, arbitrates them with polls using the
+  configured forward-burst limit, verifies previewed actions at admission and
+  rejects stale completions. See
+  [`StoreForwardBridge.h`](include/modbus_rtu_bridge/StoreForwardBridge.h) and
+  [the facade guide](include/modbus_rtu_bridge/README.md#cooperative-storeforwardbridge).
+- **Optional master adapter.** A thin template maps `DownstreamRequest` to the
+  common `ModbusRTUMaster` API without making that library a dependency. See
+  [`ModbusRTUMasterBackend.h`](include/modbus_rtu_bridge/adapters/ModbusRTUMasterBackend.h)
+  and [adapter usage](include/modbus_rtu_bridge/README.md#optional-modbusrtumaster-adapter).
+- **Explicit ownership.** Routes, images, payload snapshots, work slots and
+  synchronization remain caller-owned. There are no threads, hardware clocks,
+  serial ports, virtual calls or allocator calls hidden in the core. Generic
+  queue assignment still follows the stored type's own behavior. See
   [the ownership table](include/modbus_rtu_bridge/README.md#ownership-and-concurrency).
 - **Bounded regression tests.** Native tests cover routing, gaps, overflow,
-  cache copies, validation, dispatch order, and paired route-lookup and
-  forward-planning performance budgets. See [Testing](#testing).
+  cache copies, mixed-table dispatch order, stale/mutated actions, fairness,
+  allocation count, storage size, and paired performance budgets. See
+  [Testing](#testing).
 
 ## Quick start: route a flattened range
 
@@ -177,15 +202,66 @@ ordering elsewhere and does not use session checks or completion aggregation.
 Such integrations may use `planner.next(cursor, request)` without inventing a
 request sequence.
 
+## Coordinate work cooperatively
+
+The facade uses fixed caller-owned slots and never runs a worker itself:
+
+```cpp
+#include <modbus_rtu_bridge/StoreForwardBridge.h>
+
+using namespace ModbusRTUBridge;
+
+StoreForwardWorkSlot workSlots[4];
+CompletionLedgerSlot ledgerSlots[4];
+CompletionLedger ledger(ledgerSlots, 4);
+StoreForwardBridge bridge(
+    ForwardPlanner(RouteTableView(routes, 2), ForwardPlanOptions(64, 32)),
+    workSlots, 4, ledger,
+    PollPlanner(PollPlannerOptions(2)));
+
+const SessionStateView session(true, 1, 1, SessionPhase::Ready);
+bridge.admitWork(work, session);  // work may be coil or holding-register data
+
+StoreForwardAction action;
+if (bridge.nextAction(session, nowTicks, polls, pollCount, action) ==
+    StoreForwardNextStatus::Ready) {
+  // Call admitAction only after reserving transport/worker capacity. Pass the
+  // same session and poll candidates used for the preview.
+  const StoreForwardActionAdmitStatus admitted =
+      bridge.admitAction(action, session, polls, pollCount);
+  if (admitted == StoreForwardActionAdmitStatus::Admitted) {
+    // Execute action.downstream. Retry outside the library, then report one
+    // terminal outcome while keeping action and its payload immutable.
+    const StoreForwardCompletion result =
+        bridge.complete(action, DownstreamOutcome::Applied, session);
+  }
+}
+```
+
+`nextAction()` is a side-effect-free preview. Queue rejection therefore does
+not move the work or poll cursor. `admitAction()` rechecks the proposal and is
+the state-changing publication point. A terminal failure stops unissued
+fragments, reports whether the send was definite or uncertain, and never rolls
+the desired image back automatically.
+
+Payload snapshots remain caller-owned and immutable until the returned
+completion reports `workRetired`. Idle stale or cancelled work can be removed
+one item at a time with `discardOneStaleWork()` or `abandonFront()`; both return
+its identity and `userContext` so the caller can reclaim that snapshot. The
+bulk `reset()` is intended only for storage whose lifetime is reclaimed as one
+pool. See the [facade lifetime example](include/modbus_rtu_bridge/README.md#cooperative-storeforwardbridge).
+
 ## Store-and-forward flow
 
 A typical integration is:
 
-1. Validate an upstream write and reserve space for its immutable snapshot.
+1. Validate an upstream write and reserve space for its immutable snapshot and
+   bounded work/ledger slot.
 2. Update the visible cache and publish work in the application's chosen
    order.
-3. Create an immutable ingress view and use `ForwardPlanner` to prove complete
-   route coverage before producing endpoint-local, quantity-bounded requests.
+3. Create an immutable ingress view and either use `ForwardPlanner` directly or
+   admit it to `StoreForwardBridge`. Complete-range routing is proved before
+   any fragment is exposed.
 4. Run typed downstream requests from a caller-owned worker or cooperative
    loop.
 5. Resolve terminal downstream results in planner order. The completion
@@ -207,10 +283,11 @@ scripts/run_native_tests.sh
 ```
 
 These tests cover the platform-neutral core, including deterministic planning
-traces, full-range atomicity, wraparound identities, stale and out-of-order
-completions, exactly-once notices, and superseded desired data. Serial timing,
-queue scheduling, and electrical bus behavior belong to the application that
-integrates it.
+traces, full-range atomicity, wraparound identities, stale and mutated actions,
+cross-table FIFO order, poll starvation/decline paths, exactly-once notices,
+zero allocations, bounded object sizes, first/worst-slot ledger lookup, and
+paired performance lanes. Serial timing and electrical bus behavior belong to
+the application that integrates it.
 
 ## License
 

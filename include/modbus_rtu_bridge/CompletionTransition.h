@@ -33,6 +33,18 @@ enum class DownstreamOutcome : uint8_t {
   FailedAfterSend,
 };
 
+inline bool isKnownDownstreamOutcome(DownstreamOutcome outcome) {
+  switch(outcome){
+    case DownstreamOutcome::Applied:
+    case DownstreamOutcome::DefinitelyNotSent:
+    case DownstreamOutcome::SendUncertain:
+    case DownstreamOutcome::FailedAfterSend:
+      return true;
+    default:
+      return false;
+  }
+}
+
 enum class AppliedImageAction : uint8_t {
   None = 0U,
   MarkAppliedRange,
@@ -59,6 +71,7 @@ enum class CompletionDecisionStatus : uint8_t {
   AggregateMismatch,
   OutOfOrder,
   AlreadyTerminal,
+  InvalidOutcome,
 };
 
 struct CompletionRecord {
@@ -173,6 +186,10 @@ inline CompletionDecision resolveCompletion(
   if(aggregate.complete){
     return CompletionDetail::rejectedDecision(
         CompletionDecisionStatus::AlreadyTerminal);
+  }
+  if(!isKnownDownstreamOutcome(observed.outcome)){
+    return CompletionDetail::rejectedDecision(
+        CompletionDecisionStatus::InvalidOutcome);
   }
   if(!sameRequestIdentity(expected.identity, observed.identity)){
     return CompletionDetail::rejectedDecision(
