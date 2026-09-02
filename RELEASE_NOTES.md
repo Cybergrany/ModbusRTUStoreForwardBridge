@@ -1,5 +1,14 @@
 # Release notes
 
+## v0.3.1
+
+Added `PollIndexScan`, a small allocation-free wrapper for integrations that
+store only a round-robin child index and last-poll timestamp. It preserves the
+existing `PollPlanner` scan and commit rules: declined or abandoned candidates
+do not advance persistent state, invalid indices fail closed, and a changed
+candidate count rejects the commit. Native tests compare its result and cost
+with the equivalent lower-level planner sequence.
+
 ## v0.3.0
 
 Added an optional cooperative orchestration layer while keeping the lower-level

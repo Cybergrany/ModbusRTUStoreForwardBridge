@@ -20,6 +20,8 @@ static_assert(!std::is_copy_constructible<CompletionLedger>::value,
               "CompletionLedger must not alias storage through copies");
 static_assert(!std::is_copy_constructible<StoreForwardBridge>::value,
               "StoreForwardBridge must not alias storage through copies");
+static_assert(sizeof(PollIndexScan) <= 32U,
+              "PollIndexScan must remain a small scalar-only hot-path view");
 
 unsigned g_checks = 0U;
 size_t g_allocations = 0U;
@@ -481,6 +483,55 @@ void testPollPlannerAdmissionFairnessAndWrap() {
 
   CHECK(pollDeadlineReached32(4U, 0xFFFFFFF0UL));
   CHECK(!pollDeadlineReached32(0xFFFFFFF0UL, 4U));
+}
+
+void testPollIndexScanPublishesOnlyConsumedState() {
+  PollIndexScan abandoned(3U, 1U, 77U);
+  uint16_t index = 0xFFFFU;
+  CHECK(abandoned.next(index));
+  CHECK(index == 1U);
+  CHECK(abandoned.next(index));
+  CHECK(index == 2U);
+  CHECK(abandoned.next(index));
+  CHECK(index == 0U);
+  CHECK(!abandoned.next(index));
+  CHECK(abandoned.nextPollIndex() == 1U);
+  CHECK(abandoned.lastPollAt() == 77U);
+
+  PollIndexScan invalidIndex(3U, 1U, 77U);
+  CHECK(!invalidIndex.commitConsumed(3U, 3U, 99U));
+  CHECK(invalidIndex.nextPollIndex() == 1U);
+  CHECK(invalidIndex.lastPollAt() == 77U);
+
+  PollIndexScan changedCount(3U, 1U, 77U);
+  CHECK(changedCount.next(index));
+  CHECK(index == 1U);
+  CHECK(!changedCount.commitConsumed(index, 2U, 99U));
+  CHECK(changedCount.nextPollIndex() == 1U);
+  CHECK(changedCount.lastPollAt() == 77U);
+
+  PollIndexScan consumed(3U, 1U, 77U);
+  CHECK(consumed.next(index));
+  CHECK(index == 1U);
+  CHECK(consumed.next(index));
+  CHECK(index == 2U);
+  CHECK(consumed.commitConsumed(index, 3U, 99U));
+  CHECK(consumed.nextPollIndex() == 0U);
+  CHECK(consumed.lastPollAt() == 99U);
+
+  PollIndexScan normalized(3U, 9U, 88U);
+  CHECK(normalized.nextPollIndex() == 0U);
+  CHECK(normalized.lastPollAt() == 88U);
+  CHECK(normalized.next(index));
+  CHECK(index == 0U);
+
+  PollIndexScan empty(0U, 9U, 55U);
+  CHECK(empty.nextPollIndex() == 0U);
+  CHECK(empty.lastPollAt() == 55U);
+  CHECK(!empty.next(index));
+  CHECK(!empty.commitConsumed(0U, 0U, 66U));
+  CHECK(empty.nextPollIndex() == 0U);
+  CHECK(empty.lastPollAt() == 55U);
 }
 
 void testFacadeTwoPhaseFlowOrderingAndSessionSafety() {
@@ -1071,6 +1122,11 @@ void testNoAllocationCharacterization() {
         StoreForwardActionAdmitStatus::Admitted);
   CHECK(bridge.complete(action, DownstreamOutcome::Applied, ready).status ==
         StoreForwardCompleteStatus::Completed);
+  PollIndexScan scan(3U, 1U, 7U);
+  uint16_t index = 0U;
+  CHECK(scan.next(index));
+  CHECK(index == 1U);
+  CHECK(scan.commitConsumed(index, 3U, 8U));
   CHECK(g_allocations == before);
 }
 
@@ -1094,6 +1150,7 @@ int main() {
   testCompletionLedgerCapacityOrderingAndOutcomes();
   testCompletionLedgerStaleRetryAndFailureEdges();
   testPollPlannerAdmissionFairnessAndWrap();
+  testPollIndexScanPublishesOnlyConsumedState();
   testFacadeTwoPhaseFlowOrderingAndSessionSafety();
   testFacadePreservesCrossTableAdmissionOrder();
   testFacadeStaleQueueAndValidationEdges();

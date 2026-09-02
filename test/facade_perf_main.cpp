@@ -187,6 +187,69 @@ MBUS_BRIDGE_FACADE_PERF double runLedgerSlot(
   return elapsed.count() / static_cast<double>(kIterations);
 }
 
+// Compare the convenience scan with the exact lower-level planner sequence it
+// wraps. Both lanes construct, advance twice and commit one poll per iteration;
+// the digest also proves identical cursor/timestamp publication.
+MBUS_BRIDGE_FACADE_PERF double runRawPollIndexScan(uint32_t& digestOut) {
+  uint32_t digest = 2166136261UL;
+  const std::chrono::steady_clock::time_point start =
+      std::chrono::steady_clock::now();
+  for(uint32_t iteration = 0UL; iteration < kIterations; ++iteration){
+    const uint16_t initial = static_cast<uint16_t>(iteration & 3UL);
+    PollPlanner planner;
+    PollPlannerState state;
+    state.nextPollIndex = initial;
+    state.lastPollAt = iteration;
+    PollScanCursor cursor;
+    planner.beginPollScan(4U, state, cursor);
+    uint16_t index = 0U;
+    if(planner.nextIndex(cursor, index) != PollScanIndexStatus::Candidate ||
+       planner.nextIndex(cursor, index) != PollScanIndexStatus::Candidate ||
+       !planner.commit(
+           PollSelection::fromCandidateSet(
+               ScheduledActionKind::Poll, index, 4U),
+           4U, iteration + 1UL, state)){
+      return 0.0;
+    }
+    digest ^= static_cast<uint32_t>(state.nextPollIndex);
+    digest *= 16777619UL;
+    digest ^= state.lastPollAt;
+    digest *= 16777619UL;
+  }
+  const std::chrono::steady_clock::time_point end =
+      std::chrono::steady_clock::now();
+  digestOut = digest;
+  g_sink += digest;
+  const std::chrono::duration<double, std::nano> elapsed = end - start;
+  return elapsed.count() / static_cast<double>(kIterations);
+}
+
+MBUS_BRIDGE_FACADE_PERF double runConveniencePollIndexScan(
+    uint32_t& digestOut) {
+  uint32_t digest = 2166136261UL;
+  const std::chrono::steady_clock::time_point start =
+      std::chrono::steady_clock::now();
+  for(uint32_t iteration = 0UL; iteration < kIterations; ++iteration){
+    PollIndexScan scan(
+        4U, static_cast<uint16_t>(iteration & 3UL), iteration);
+    uint16_t index = 0U;
+    if(!scan.next(index) || !scan.next(index) ||
+       !scan.commitConsumed(index, 4U, iteration + 1UL)){
+      return 0.0;
+    }
+    digest ^= static_cast<uint32_t>(scan.nextPollIndex());
+    digest *= 16777619UL;
+    digest ^= scan.lastPollAt();
+    digest *= 16777619UL;
+  }
+  const std::chrono::steady_clock::time_point end =
+      std::chrono::steady_clock::now();
+  digestOut = digest;
+  g_sink += digest;
+  const std::chrono::duration<double, std::nano> elapsed = end - start;
+  return elapsed.count() / static_cast<double>(kIterations);
+}
+
 void sort(double* values, uint8_t count) {
   for(uint8_t index = 1U; index < count; ++index){
     const double value = values[index];
@@ -219,36 +282,54 @@ int main() {
   uint32_t facadeDigest = 0UL;
   uint32_t firstLedgerDigest = 0UL;
   uint32_t worstLedgerDigest = 0UL;
+  uint32_t rawPollDigest = 0UL;
+  uint32_t conveniencePollDigest = 0UL;
   (void)runDirect(planner, &value, directDigest);
   (void)runFacade(planner, &value, facadeDigest);
   (void)runLedgerSlot(0U, firstLedgerDigest);
   (void)runLedgerSlot(
       static_cast<uint16_t>(kLedgerCapacity - 1U), worstLedgerDigest);
+  (void)runRawPollIndexScan(rawPollDigest);
+  (void)runConveniencePollIndexScan(conveniencePollDigest);
   if(directDigest != facadeDigest){
     return 3;
   }
   if(firstLedgerDigest != worstLedgerDigest){
     return 5;
   }
+  if(rawPollDigest != conveniencePollDigest){
+    return 6;
+  }
 
   double ratios[kSamples];
   double ledgerRatios[kSamples];
+  double pollScanRatios[kSamples];
   double directTotal = 0.0;
   double facadeTotal = 0.0;
   double firstLedgerTotal = 0.0;
   double worstLedgerTotal = 0.0;
+  double rawPollTotal = 0.0;
+  double conveniencePollTotal = 0.0;
   for(uint8_t sample = 0U; sample < kSamples; ++sample){
     double direct = 0.0;
     double facade = 0.0;
     double firstLedger = 0.0;
     double worstLedger = 0.0;
+    double rawPoll = 0.0;
+    double conveniencePoll = 0.0;
     if((sample & 1U) == 0U){
       direct = runDirect(planner, &value, directDigest);
       facade = runFacade(planner, &value, facadeDigest);
       firstLedger = runLedgerSlot(0U, firstLedgerDigest);
       worstLedger = runLedgerSlot(
           static_cast<uint16_t>(kLedgerCapacity - 1U), worstLedgerDigest);
+      rawPoll = runRawPollIndexScan(rawPollDigest);
+      conveniencePoll =
+          runConveniencePollIndexScan(conveniencePollDigest);
     }else{
+      conveniencePoll =
+          runConveniencePollIndexScan(conveniencePollDigest);
+      rawPoll = runRawPollIndexScan(rawPollDigest);
       worstLedger = runLedgerSlot(
           static_cast<uint16_t>(kLedgerCapacity - 1U), worstLedgerDigest);
       firstLedger = runLedgerSlot(0U, firstLedgerDigest);
@@ -256,21 +337,28 @@ int main() {
       direct = runDirect(planner, &value, directDigest);
     }
     if(direct == 0.0 || facade == 0.0 || firstLedger == 0.0 ||
-       worstLedger == 0.0 || directDigest != facadeDigest ||
-       firstLedgerDigest != worstLedgerDigest){
+       worstLedger == 0.0 || rawPoll == 0.0 ||
+       conveniencePoll == 0.0 || directDigest != facadeDigest ||
+       firstLedgerDigest != worstLedgerDigest ||
+       rawPollDigest != conveniencePollDigest){
       return 4;
     }
     ratios[sample] = facade / direct;
     ledgerRatios[sample] = worstLedger / firstLedger;
+    pollScanRatios[sample] = conveniencePoll / rawPoll;
     directTotal += direct;
     facadeTotal += facade;
     firstLedgerTotal += firstLedger;
     worstLedgerTotal += worstLedger;
+    rawPollTotal += rawPoll;
+    conveniencePollTotal += conveniencePoll;
   }
   sort(ratios, kSamples);
   sort(ledgerRatios, kSamples);
+  sort(pollScanRatios, kSamples);
   const double medianRatio = ratios[kSamples / 2U];
   const double medianLedgerRatio = ledgerRatios[kSamples / 2U];
+  const double medianPollScanRatio = pollScanRatios[kSamples / 2U];
   printf("cooperative facade: direct=%.2f ns facade=%.2f ns "
          "paired_median=%.4f work_slot=%luB ledger_slot=%luB action=%luB "
          "sink=%lu\n",
@@ -287,6 +375,12 @@ int main() {
          static_cast<unsigned>(kLedgerCapacity),
          worstLedgerTotal / kSamples,
          medianLedgerRatio);
+  printf("poll index scan: raw=%.2f ns convenience=%.2f ns "
+         "paired_median=%.4f scan=%luB\n",
+         rawPollTotal / kSamples,
+         conveniencePollTotal / kSamples,
+         medianPollScanRatio,
+         static_cast<unsigned long>(sizeof(PollIndexScan)));
 
   // One facade cycle intentionally adds an admission re-plan, bounded ledger
   // scan, exact action validation, and queue/fairness state transitions. This
@@ -295,11 +389,14 @@ int main() {
   // of serial-bus timing or a small MCU's instruction costs.
   const bool boundedStorage = sizeof(StoreForwardWorkSlot) <= 64U &&
                               sizeof(CompletionLedgerSlot) <= 96U &&
-                              sizeof(StoreForwardAction) <= 160U;
+                              sizeof(StoreForwardAction) <= 160U &&
+                              sizeof(PollIndexScan) <= 32U;
   // A sixteen-slot last-entry lookup is expected to cost more than the first
   // entry because the public ledger is intentionally bounded-linear. The
   // ceiling is broad enough for host noise but fails accidental unbounded or
   // quadratic work in the record/resolve hot path.
   const bool boundedLedgerLookup = medianLedgerRatio <= 6.0;
-  return boundedStorage && medianRatio <= 9.0 && boundedLedgerLookup ? 0 : 1;
+  const bool boundedPollScan = medianPollScanRatio <= 1.5;
+  return boundedStorage && medianRatio <= 9.0 && boundedLedgerLookup &&
+         boundedPollScan ? 0 : 1;
 }

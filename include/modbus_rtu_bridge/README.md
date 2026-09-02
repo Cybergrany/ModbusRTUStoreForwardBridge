@@ -17,7 +17,7 @@ library performs no serial, thread, clock or logging operations.
 | `CompletionAggregate` | Caller owns one aggregate per logical work item. | Two serials and bounded scalar state; no fragment allocation. | Resolve completions in planner order under the caller's queue/cache policy. |
 | `FixedRingQueue<T>` | Caller supplies an already-constructed `T[]`. | Head/size counters only. | Serialize producers/consumers externally. Stored pointers retain their original lifetime rules. |
 | `CompletionLedger` | Caller supplies `CompletionLedgerSlot[]`. | A bounded linear lookup and one exact in-flight request per occupied work slot. | One outstanding fragment per work; different work slots may be active concurrently. |
-| `PollPlanner` | Caller owns `PollPlannerState` and optional `PollScanCursor`. | Options only; no clock. | `select()`/scan are read-only. Commit persistent state only when a phase is consumed. |
+| `PollPlanner` / `PollIndexScan` | Caller owns planner state, or initializes a transient scan from its index and timestamp. | Scalar state only; no clock or allocation. | Selection is read-only. `PollIndexScan` publishes new values only after a successful consumed commit. |
 | `StoreForwardBridge` | Caller supplies `StoreForwardWorkSlot[]` and a ledger. | FIFO/scalar state plus one retained exact admitted action. | Serialize all calls. Cross-thread execution must publish an immutable action copy. |
 | `DownstreamRequest` | Caller owns request and pointed-to buffers. | None. `consistencyContext` is an untyped borrowed hook. | Queue, request-buffer lifetime and any backend lock belong to the adapter. |
 | `DownstreamCompletion<Result>` | Returned by value. | None. | Delivery/order belong to the runner. |
@@ -443,6 +443,34 @@ while (planner.nextIndex(scan, index) == PollScanIndexStatus::Candidate) {
 The two-argument `PollSelection(kind, index)` remains unbound for applications
 that perform their own selection and count validation. Prefer
 `fromCandidateSet()` when a manual index scan should reject a changed count.
+
+If an integration already stores only its cursor and last-consumed timestamp,
+`PollIndexScan` applies the same scan/commit contract without making the caller
+assemble planner state:
+
+```cpp
+PollIndexScan scan(childCount, nextChild, lastPollAt);
+
+uint16_t index;
+while (scan.next(index)) {
+  if (!childEnabled(index) || !pollDue(index)) {
+    continue;
+  }
+  if (!pollWasConsumed(index)) {
+    continue;
+  }
+  if (scan.commitConsumed(index, childCount, now)) {
+    nextChild = scan.nextPollIndex();
+    lastPollAt = scan.lastPollAt();
+  }
+  break;
+}
+```
+
+The constructor normalizes an invalid initial cursor to zero. Scanning or
+abandoning the object does not publish a new cursor or timestamp. A commit
+fails without changing them if the index is invalid or the child count changed
+since construction.
 
 `nextDue()` is the convenient array-backed form used by the facade. After a
 poll commit, refresh that candidate's `dueAt` or `enabled` state before another

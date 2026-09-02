@@ -70,8 +70,9 @@ this is probably not the right abstraction.
   [bounded storage and ledger usage](include/modbus_rtu_bridge/README.md#bounded-storage-and-completion-ledger).
 - **Configurable poll fairness.** `PollPlanner` selects due endpoints in
   round-robin order and limits forward-write bursts. Its two-phase API advances
-  persistent state only when a phase is consumed. An index-only scan supports
-  low-RAM hot paths. See
+  persistent state only when a phase is consumed. `PollIndexScan` gives
+  low-RAM hot paths a scalar-only convenience API without changing those
+  rules. See
   [`PollPlanner.h`](include/modbus_rtu_bridge/PollPlanner.h) and
   [poll planning](include/modbus_rtu_bridge/README.md#poll-planning-and-fairness).
 - **Cooperative bridge facade.** `StoreForwardBridge` keeps coil and holding
@@ -286,8 +287,9 @@ These tests cover the platform-neutral core, including deterministic planning
 traces, full-range atomicity, wraparound identities, stale and mutated actions,
 cross-table FIFO order, poll starvation/decline paths, exactly-once notices,
 zero allocations, bounded object sizes, first/worst-slot ledger lookup, and
-paired performance lanes. Serial timing and electrical bus behavior belong to
-the application that integrates it.
+paired performance lanes including raw-versus-convenience poll scans. Serial
+timing and electrical bus behavior belong to the application that integrates
+it.
 
 ## License
 

@@ -298,4 +298,55 @@ class PollPlanner {
   PollPlannerOptions options_;
 };
 
+// Allocation-free convenience wrapper for applications that already keep a
+// persistent round-robin index and last-consumed timestamp as separate
+// scalars. It creates one transient scan from those values and publishes new
+// values only after commitConsumed() succeeds.
+//
+// Declining candidates with next(), abandoning a scan, passing an out-of-range
+// candidate, or committing after the candidate count changes leaves the
+// published state untouched. The caller still owns time, due checks, endpoint
+// policy, execution and synchronization.
+class PollIndexScan {
+ public:
+  PollIndexScan(uint16_t candidateCount,
+                uint16_t nextPollIndex,
+                uint32_t lastPollAt)
+      : candidateCount_(candidateCount) {
+    state_.nextPollIndex =
+        (candidateCount_ != 0U && nextPollIndex < candidateCount_)
+            ? nextPollIndex
+            : 0U;
+    state_.lastPollAt = lastPollAt;
+    planner_.beginPollScan(candidateCount_, state_, scan_);
+  }
+
+  bool next(uint16_t& candidateIndex) {
+    return planner_.nextIndex(scan_, candidateIndex) ==
+           PollScanIndexStatus::Candidate;
+  }
+
+  bool commitConsumed(uint16_t candidateIndex,
+                      uint16_t currentCandidateCount,
+                      uint32_t now) {
+    return planner_.commit(
+        PollSelection::fromCandidateSet(
+            ScheduledActionKind::Poll,
+            candidateIndex,
+            candidateCount_),
+        currentCandidateCount,
+        now,
+        state_);
+  }
+
+  uint16_t nextPollIndex() const { return state_.nextPollIndex; }
+  uint32_t lastPollAt() const { return state_.lastPollAt; }
+
+ private:
+  uint16_t candidateCount_;
+  PollPlanner planner_;
+  PollPlannerState state_;
+  PollScanCursor scan_;
+};
+
 }  // namespace ModbusRTUBridge
