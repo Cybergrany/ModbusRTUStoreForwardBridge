@@ -312,41 +312,52 @@ class PollIndexScan {
   PollIndexScan(uint16_t candidateCount,
                 uint16_t nextPollIndex,
                 uint32_t lastPollAt)
-      : candidateCount_(candidateCount) {
-    state_.nextPollIndex =
+      : candidateCount_(candidateCount),
+        nextPollIndex_(
         (candidateCount_ != 0U && nextPollIndex < candidateCount_)
             ? nextPollIndex
-            : 0U;
-    state_.lastPollAt = lastPollAt;
-    planner_.beginPollScan(candidateCount_, state_, scan_);
-  }
+            : 0U),
+        scanIndex_(nextPollIndex_),
+        remaining_(candidateCount_),
+        lastPollAt_(lastPollAt) {}
 
   bool next(uint16_t& candidateIndex) {
-    return planner_.nextIndex(scan_, candidateIndex) ==
-           PollScanIndexStatus::Candidate;
+    if(remaining_ == 0U || candidateCount_ == 0U){
+      return false;
+    }
+    candidateIndex = scanIndex_;
+    ++scanIndex_;
+    if(scanIndex_ == candidateCount_){
+      scanIndex_ = 0U;
+    }
+    --remaining_;
+    return true;
   }
 
   bool commitConsumed(uint16_t candidateIndex,
                       uint16_t currentCandidateCount,
                       uint32_t now) {
-    return planner_.commit(
-        PollSelection::fromCandidateSet(
-            ScheduledActionKind::Poll,
-            candidateIndex,
-            candidateCount_),
-        currentCandidateCount,
-        now,
-        state_);
+    if(currentCandidateCount != candidateCount_ ||
+       candidateCount_ == 0U || candidateIndex >= candidateCount_){
+      return false;
+    }
+    nextPollIndex_ = static_cast<uint16_t>(candidateIndex + 1U);
+    if(nextPollIndex_ == candidateCount_){
+      nextPollIndex_ = 0U;
+    }
+    lastPollAt_ = now;
+    return true;
   }
 
-  uint16_t nextPollIndex() const { return state_.nextPollIndex; }
-  uint32_t lastPollAt() const { return state_.lastPollAt; }
+  uint16_t nextPollIndex() const { return nextPollIndex_; }
+  uint32_t lastPollAt() const { return lastPollAt_; }
 
  private:
   uint16_t candidateCount_;
-  PollPlanner planner_;
-  PollPlannerState state_;
-  PollScanCursor scan_;
+  uint16_t nextPollIndex_;
+  uint16_t scanIndex_;
+  uint16_t remaining_;
+  uint32_t lastPollAt_;
 };
 
 }  // namespace ModbusRTUBridge

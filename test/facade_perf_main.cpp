@@ -390,7 +390,7 @@ int main() {
   const bool boundedStorage = sizeof(StoreForwardWorkSlot) <= 64U &&
                               sizeof(CompletionLedgerSlot) <= 96U &&
                               sizeof(StoreForwardAction) <= 160U &&
-                              sizeof(PollIndexScan) <= 32U;
+                              sizeof(PollIndexScan) <= 16U;
   // A sixteen-slot last-entry lookup is expected to cost more than the first
   // entry because the public ledger is intentionally bounded-linear. The
   // ceiling is broad enough for host noise but fails accidental unbounded or

@@ -20,7 +20,7 @@ static_assert(!std::is_copy_constructible<CompletionLedger>::value,
               "CompletionLedger must not alias storage through copies");
 static_assert(!std::is_copy_constructible<StoreForwardBridge>::value,
               "StoreForwardBridge must not alias storage through copies");
-static_assert(sizeof(PollIndexScan) <= 32U,
+static_assert(sizeof(PollIndexScan) <= 16U,
               "PollIndexScan must remain a small scalar-only hot-path view");
 
 unsigned g_checks = 0U;

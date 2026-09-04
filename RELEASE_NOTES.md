@@ -1,5 +1,12 @@
 # Release notes
 
+## v0.3.2
+
+`PollIndexScan` now stores its scalar scan/commit state directly instead of
+embedding the general-purpose planner state. Its public API and decisions are
+unchanged. The smaller implementation reduces stack use and gives compilers a
+clearer hot path for integrations that only need round-robin indices.
+
 ## v0.3.1
 
 Added `PollIndexScan`, a small allocation-free wrapper for integrations that
