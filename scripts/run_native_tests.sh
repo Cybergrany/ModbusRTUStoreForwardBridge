@@ -34,6 +34,19 @@ compiler="${CXX:-g++}"
 
 "$compiler" \
   -std=c++11 \
+  -Os \
+  -Wall \
+  -Wextra \
+  -Werror \
+  -pedantic-errors \
+  -I"$repo_dir/include" \
+  "$repo_dir/test/facade_main.cpp" \
+  -o "$build_dir/facade_main"
+
+"$build_dir/facade_main"
+
+"$compiler" \
+  -std=c++11 \
   -O2 \
   -Wall \
   -Wextra \
@@ -51,4 +64,21 @@ if command -v taskset >/dev/null 2>&1; then
   taskset -c "$affinity_cpu" "$build_dir/perf_main"
 else
   "$build_dir/perf_main"
+fi
+
+"$compiler" \
+  -std=c++11 \
+  -O2 \
+  -Wall \
+  -Wextra \
+  -Werror \
+  -pedantic-errors \
+  -I"$repo_dir/include" \
+  "$repo_dir/test/facade_perf_main.cpp" \
+  -o "$build_dir/facade_perf_main"
+
+if command -v taskset >/dev/null 2>&1; then
+  taskset -c "$affinity_cpu" "$build_dir/facade_perf_main"
+else
+  "$build_dir/facade_perf_main"
 fi
